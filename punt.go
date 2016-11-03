@@ -1,11 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/jeromer/syslogparser"
 	"github.com/lollipopman/syslogd"
-	"gopkg.in/olivere/elastic.v3"
+	"gopkg.in/olivere/elastic.v5"
 	"os"
 	"os/signal"
 	"runtime"
@@ -82,6 +83,7 @@ func NewState() *State {
 
 	indexes["0.0.0.0:5140"] = NewIndexConfig("api-logs-", "2006.01.02", METHOD_UNPACK_MERGE)
 	indexes["0.0.0.0:5141"] = NewIndexConfig("syslog-", "2006.01.02", METHOD_NONE)
+	indexes["0.0.0.0:5142"] = NewIndexConfig("cassandra-", "2006.01.02", METHOD_NONE)
 
 	return &State{
 		numWorkers: (runtime.NumCPU() - 1) / 2,
@@ -141,7 +143,7 @@ func (w *Worker) handleMessage(index *IndexConfig, logParts syslogparser.LogPart
 		err := json.Unmarshal([]byte(logParts["content"].(string)), &data)
 
 		if err != nil {
-			fmt.Printf("Failed to unmarshal data: %v\n", err)
+			fmt.Printf("Failed to unmarshal data: %v (%v)\n", err, logParts["content"].(string))
 			return
 		}
 
@@ -176,7 +178,8 @@ func (w *Worker) handleMessage(index *IndexConfig, logParts syslogparser.LogPart
 }
 
 func (w *Worker) writeToElastic() {
-	_, err := w.bulk.Do()
+	ctx := context.Background()
+	_, err := w.bulk.Do(ctx)
 
 	if err != nil {
 		fmt.Printf("Failed to write to elasticsearch: %v\n", err)
