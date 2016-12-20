@@ -81,9 +81,9 @@ type State struct {
 func NewState() *State {
 	indexes := make(map[string]*IndexConfig)
 
-	indexes["0.0.0.0:5140"] = NewIndexConfig("api-logs-", "2006.01.02", METHOD_UNPACK_MERGE)
-	indexes["0.0.0.0:5141"] = NewIndexConfig("syslog-", "2006.01.02", METHOD_NONE)
-	indexes["0.0.0.0:5142"] = NewIndexConfig("cassandra-", "2006.01.02", METHOD_NONE)
+	indexes["0.0.0.0:5140"] = NewIndexConfig("api-logs-", "2006.01.02.15", METHOD_UNPACK_MERGE)
+	indexes["0.0.0.0:5141"] = NewIndexConfig("syslog-", "2006.01.02.15", METHOD_NONE)
+	indexes["0.0.0.0:5142"] = NewIndexConfig("cassandra-", "2006.01.02.15", METHOD_NONE)
 
 	return &State{
 		numWorkers: (runtime.NumCPU() - 1) / 2,
