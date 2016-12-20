@@ -7,9 +7,11 @@ import (
 	"github.com/jeromer/syslogparser"
 	"github.com/lollipopman/syslogd"
 	"gopkg.in/olivere/elastic.v5"
+	"net"
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
@@ -24,6 +26,26 @@ const (
 	// Just parse the message as JSON and save it
 	METHOD_UNPACK_TAKE
 )
+
+type Stats struct {
+	Lines struct {
+		Parsed struct {
+			Success uint64 `json:"success"`
+			Failure uint64 `json:"failure"`
+		} `json:"parsed"`
+		Written struct {
+			Success uint64 `json:"success"`
+			Failure uint64 `json:"failure"`
+		} `json:"written"`
+	} `json:"lines"`
+}
+
+func (s *Stats) Add(other *Stats) {
+	s.Lines.Parsed.Success += other.Lines.Parsed.Success
+	s.Lines.Parsed.Failure += other.Lines.Parsed.Failure
+	s.Lines.Written.Success += other.Lines.Written.Success
+	s.Lines.Written.Failure += other.Lines.Written.Failure
+}
 
 // Represents a single log line with an index destination
 type Payload struct {
@@ -59,8 +81,14 @@ func NewIndexConfig(prefix, dateFormat string, messageMethod int) *IndexConfig {
 }
 
 type State struct {
+	// What to bind the debug server on
+	debugBind string
+
 	// Number of workers to run, defaults to (NUM_CORES - 1) / 2
 	numWorkers int
+
+	// Workers maping
+	workers []*Worker
 
 	// Incoming queue that workers pull off
 	in chan *Payload
@@ -85,8 +113,12 @@ func NewState() *State {
 	indexes["0.0.0.0:5141"] = NewIndexConfig("syslog-", "2006.01.02.15", METHOD_NONE)
 	indexes["0.0.0.0:5142"] = NewIndexConfig("cassandra-", "2006.01.02.15", METHOD_NONE)
 
+	numWorkers := (runtime.NumCPU() - 1) / 2
+
 	return &State{
-		numWorkers: (runtime.NumCPU() - 1) / 2,
+		debugBind:  "localhost:8878",
+		numWorkers: numWorkers,
+		workers:    make([]*Worker, numWorkers),
 		in:         make(chan *Payload, 0),
 		esURL:      "http://127.0.0.1:9200",
 		indexes:    indexes,
@@ -99,6 +131,7 @@ type Worker struct {
 	exit   chan bool
 	client *elastic.Client
 	bulk   *elastic.BulkService
+	stats  Stats
 }
 
 func NewWorker(state *State) (*Worker, error) {
@@ -115,12 +148,19 @@ func NewWorker(state *State) (*Worker, error) {
 }
 
 func (w *Worker) Run() {
+	var success bool
+
 	w.state.wg.Add(1)
 
 	for {
 		select {
 		case payload := <-w.state.in:
-			w.handleMessage(payload.index, payload.parts)
+			success = w.handleMessage(payload.index, payload.parts)
+			if success {
+				w.stats.Lines.Parsed.Success += 1
+			} else {
+				w.stats.Lines.Parsed.Failure += 1
+			}
 		case <-w.exit:
 			w.cleanup()
 			w.state.wg.Done()
@@ -129,7 +169,7 @@ func (w *Worker) Run() {
 	}
 }
 
-func (w *Worker) handleMessage(index *IndexConfig, logParts syslogparser.LogParts) {
+func (w *Worker) handleMessage(index *IndexConfig, logParts syslogparser.LogParts) bool {
 	if w.bulk == nil {
 		w.bulk = w.client.Bulk()
 	}
@@ -144,7 +184,7 @@ func (w *Worker) handleMessage(index *IndexConfig, logParts syslogparser.LogPart
 
 		if err != nil {
 			fmt.Printf("Failed to unmarshal data: %v (%v)\n", err, logParts["content"].(string))
-			return
+			return false
 		}
 
 		if index.messageMethod == METHOD_UNPACK_MERGE {
@@ -175,14 +215,20 @@ func (w *Worker) handleMessage(index *IndexConfig, logParts syslogparser.LogPart
 	if w.bulk.NumberOfActions() >= w.state.bulkSize {
 		w.writeToElastic()
 	}
+
+	return true
 }
 
 func (w *Worker) writeToElastic() {
+	actions := uint64(w.bulk.NumberOfActions())
 	ctx := context.Background()
 	_, err := w.bulk.Do(ctx)
 
 	if err != nil {
 		fmt.Printf("Failed to write to elasticsearch: %v\n", err)
+		w.stats.Lines.Written.Failure += actions
+	} else {
+		w.stats.Lines.Written.Success += actions
 	}
 
 	w.bulk = nil
@@ -217,10 +263,65 @@ func runIndex(state *State, hoststring string, index *IndexConfig, exit chan boo
 	}
 }
 
-func run(state *State) {
-	workers := make([]*Worker, state.numWorkers)
+func handleDebugStats(state *State, c *net.TCPConn) {
+	stats := new(Stats)
 
-	fmt.Printf("Starting up %v workers\n", runtime.NumCPU()-1)
+	for _, worker := range state.workers {
+		stats.Add(&worker.stats)
+	}
+
+	data, err := json.Marshal(stats)
+	if err != nil {
+		fmt.Printf("Failed to serialize stats: %v\n", err)
+		return
+	}
+
+	c.Write(append(data, '\n'))
+}
+
+func handleDebugConnection(state *State, c *net.TCPConn) {
+	defer c.Close()
+	fmt.Printf("Connection from %v established.\n", c.RemoteAddr())
+
+	buf := make([]byte, 4096)
+	for {
+		n, err := c.Read(buf)
+		if err != nil {
+			fmt.Printf("Connection from %v closed: %v\n", c.RemoteAddr(), err)
+			return
+		}
+
+		data := string(buf[:n])
+		if strings.HasPrefix(data, "stats") {
+			handleDebugStats(state, c)
+		} else if strings.HasPrefix(data, "exit") || strings.HasPrefix(data, "quit") {
+			return
+		}
+	}
+}
+
+func runDebugServer(state *State) {
+	l, err := net.Listen("tcp", state.debugBind)
+	if err != nil {
+		fmt.Printf("Failed to start debug server: %v\n", err)
+		return
+	}
+	ln := l.(*net.TCPListener)
+
+	for {
+		conn, err := ln.AcceptTCP()
+		if err != nil {
+			fmt.Printf("Failed to accept debug server connection: %v\n", err)
+			return
+		}
+
+		go handleDebugConnection(state, conn)
+	}
+
+}
+
+func run(state *State) {
+	fmt.Printf("Starting up %v workers\n", state.numWorkers)
 	for i := 0; i < state.numWorkers; i++ {
 		w, err := NewWorker(state)
 		if err != nil {
@@ -228,7 +329,7 @@ func run(state *State) {
 			return
 		}
 
-		workers[i] = w
+		state.workers[i] = w
 		go w.Run()
 	}
 
@@ -251,7 +352,7 @@ func run(state *State) {
 	}
 
 	// Next signal the workers to stop
-	for _, w := range workers {
+	for _, w := range state.workers {
 		w.exit <- true
 	}
 
@@ -262,5 +363,6 @@ func run(state *State) {
 func main() {
 	state := NewState()
 
+	go runDebugServer(state)
 	run(state)
 }
