@@ -1,0 +1,30 @@
+{
+  "clusters": {
+    "default": {
+      "url": "http://localhost:9200",
+      "num_workers": 4,
+      "bulk_size": 128
+    }
+  },
+  "indexes": [
+    {
+      "bind": "udp:localhost:5678",
+      "cluster": "default",
+      "prefix": "test-",
+      "mapping": "test",
+      "date_format": "2006.01.02.15",
+      "transformer": {
+        "name": "direct"
+      }
+    }
+  ],
+  "mappings": [
+    {
+      "name": "test",
+      "fields": {
+        "key": "keyword",
+        "ip": "ip"
+      }
+    }
+  ]
+}

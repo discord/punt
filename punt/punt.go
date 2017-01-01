@@ -1,5 +1,6 @@
-package main
+package punt
 
+/*
 import (
 	"context"
 	"encoding/json"
@@ -360,9 +361,11 @@ func run(state *State) {
 	state.wg.Wait()
 }
 
+/*
 func main() {
 	state := NewState()
 
 	go runDebugServer(state)
 	run(state)
 }
+*/
