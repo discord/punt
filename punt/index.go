@@ -3,15 +3,17 @@ package punt
 import (
 	"github.com/jeromer/syslogparser"
 	"github.com/lollipopman/syslogd"
+	"gopkg.in/olivere/elastic.v5"
 	"log"
 	"strings"
+	"time"
 )
 
 type IndexConfig struct {
 	Bind        string `json:"bind"`
 	Cluster     string `json:"cluster"`
 	Prefix      string `json:"prefix"`
-	Mapping     string `json:"mapping"`
+	Type        string `json:"type"`
 	DateFormat  string `json:"date_format"`
 	Transformer struct {
 		Name   string                 `json:"name"`
@@ -28,16 +30,12 @@ type Index struct {
 	exit        chan bool
 }
 
-func (i IndexConfig) getTransformer() Transformer {
-	if i.Transformer.Name == "" || i.Transformer.Name == "direct" {
-		return NewDirectTransformer(i.Transformer.Config)
-	} else if i.Transformer.Name == "merge" {
-		return NewUnpackMergeTransformer(i.Transformer.Config)
-	} else if i.Transformer.Name == "take" {
-		return NewUnpackTakeTransformer(i.Transformer.Config)
-	} else {
-		log.Panicf("Unknown parser type: %v", i.Transformer.Name)
-		return nil
+func NewIndex(config IndexConfig, cluster *Cluster) *Index {
+	return &Index{
+		Cluster:     cluster,
+		Config:      config,
+		transformer: GetTransformer(config.Transformer.Name, config.Transformer.Config),
+		exit:        make(chan bool),
 	}
 }
 
@@ -66,10 +64,21 @@ func (i *Index) Run() {
 	channel := make(chan syslogparser.LogParts)
 	i.server.Start(channel)
 
+	var payload map[string]interface{}
+
 	for {
 		select {
 		case msg := <-channel:
-			log.Printf("GOT MESSAGE %v\n", msg)
+			payload, err = i.transformer.Transform(msg)
+			if err != nil {
+				log.Printf("Failed to transform message `%v`: %v", msg, err)
+			}
+
+			timestamp := msg["timestamp"].(time.Time)
+			indexString := i.Config.Prefix + timestamp.Format(i.Config.DateFormat)
+			payload["@timestamp"] = timestamp.Format("2006-01-02T15:04:05+00:00")
+
+			i.Cluster.Incoming <- elastic.NewBulkIndexRequest().Index(indexString).Type(i.Config.Type).Doc(payload)
 		case <-i.exit:
 			return
 		}

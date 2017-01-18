@@ -13,7 +13,6 @@ type Mapping struct {
 
 func (m Mapping) GenerateJSON() map[string]interface{} {
 	result := make(map[string]interface{})
-	result["_all"] = map[string]bool{"enabled": m.All}
 
 	properties := make(map[string]interface{})
 	for k, v := range m.Fields {
@@ -25,14 +24,10 @@ func (m Mapping) GenerateJSON() map[string]interface{} {
 }
 
 func (m Mapping) PutMapping(client *elastic.Client) error {
-	final := map[string]interface{}{
-		"mappings": map[string]interface{}{
-			m.Name: m.GenerateJSON(),
-		},
-	}
+	final := m.GenerateJSON()
 
 	ctx := context.Background()
-	_, err := client.PutMapping().BodyJson(final).Do(ctx)
+	_, err := client.PutMapping().Type(m.Name).BodyJson(final).Do(ctx)
 	if err != nil {
 		return err
 	}

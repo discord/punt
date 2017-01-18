@@ -9,6 +9,19 @@ type Transformer interface {
 	Transform(parts syslogparser.LogParts) (map[string]interface{}, error)
 }
 
+func GetTransformer(name string, config map[string]interface{}) Transformer {
+	switch name {
+	case "direct":
+		return NewDirectTransformer(config)
+	case "unpack-merge":
+		return NewUnpackMergeTransformer(config)
+	case "unpack-take":
+		return NewUnpackTakeTransformer(config)
+	default:
+		return nil
+	}
+}
+
 // Doesn't perform any transformation or parsing on the syslog structure
 type DirectTransformer struct{}
 

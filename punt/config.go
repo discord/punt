@@ -6,9 +6,9 @@ import (
 )
 
 type Config struct {
-	Clusters map[string]Cluster `json:"clusters"`
-	Indexes  []IndexConfig      `json:"indexes"`
-	Mappings []Mapping          `json:"mappings"`
+	Clusters map[string]ClusterConfig `json:"clusters"`
+	Indexes  []IndexConfig            `json:"indexes"`
+	Mappings []Mapping                `json:"mappings"`
 }
 
 func LoadConfig(path string) (*Config, error) {
