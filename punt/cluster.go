@@ -101,8 +101,6 @@ func (cw *ClusterWorker) writeToElastic() {
 	ctx := context.Background()
 	_, err := cw.esBulk.Do(ctx)
 
-	log.Printf("OK")
-
 	if err != nil {
 		log.Printf("Failed to write to ES: %v", err)
 	}

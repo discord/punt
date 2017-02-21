@@ -1,16 +1,20 @@
 package punt
 
 import (
+	"crypto/tls"
+	"github.com/b1naryth1ef/syslogd"
 	"github.com/jeromer/syslogparser"
-	"github.com/lollipopman/syslogd"
 	"gopkg.in/olivere/elastic.v5"
 	"log"
+	"net"
 	"strings"
 	"time"
 )
 
 type IndexConfig struct {
 	Bind        string `json:"bind"`
+	CertFile    string `json:"tls_cert_file"`
+	KeyFile     string `json:"tls_key_file"`
 	Cluster     string `json:"cluster"`
 	Prefix      string `json:"prefix"`
 	Type        string `json:"type"`
@@ -40,19 +44,43 @@ func NewIndex(config IndexConfig, cluster *Cluster) *Index {
 }
 
 func (i *Index) Run() {
-	i.server = syslogd.NewServer()
+	channel := make(chan syslogparser.LogParts)
+	i.server = syslogd.NewServer(channel)
 
 	bindInfo := strings.SplitN(i.Config.Bind, ":", 2)
 
 	// Default is to just bind to udp
 	var err error
-	if len(bindInfo) == 1 {
-		err = i.server.ListenUDP(bindInfo[0])
-	} else if bindInfo[0] == "tcp" {
-		log.Panicf("TCP is unsupported at the moment")
-		// err = i.server.ListenTCP(bindInfo[1])
-	} else if bindInfo[0] == "udp" {
-		err = i.server.ListenUDP(bindInfo[1])
+
+	if len(bindInfo) == 2 {
+		if bindInfo[0] == "tcp" {
+			var server net.Listener
+
+			if i.Config.CertFile != "" {
+				cert, err := tls.LoadX509KeyPair(i.Config.CertFile, i.Config.KeyFile)
+
+				if err != nil {
+					log.Panicf("Failed to load X509 TLS Certificate: %v", err)
+				}
+
+				config := tls.Config{Certificates: []tls.Certificate{cert}}
+				server, err = tls.Listen("tcp", bindInfo[1], &config)
+			} else {
+				server, err = net.Listen("tcp", bindInfo[1])
+			}
+			i.server.AddTCPListener(server)
+		} else if bindInfo[0] == "udp" {
+			addr, err := net.ResolveUDPAddr("udp", bindInfo[1])
+
+			if err != nil {
+				log.Panicf("Failed to resolve UDP bind address: %v (%v)", err, bindInfo[1])
+			}
+
+			server, err := net.ListenUDP("udp", addr)
+			i.server.AddUDPListener(server)
+		} else {
+			log.Panicf("Invalid bind type: %v", bindInfo[0])
+		}
 	} else {
 		log.Panicf("Invalid bind information: %v", bindInfo)
 	}
@@ -61,11 +89,9 @@ func (i *Index) Run() {
 		log.Panicf("Failed to bind: %v", err)
 	}
 
-	channel := make(chan syslogparser.LogParts)
-	i.server.Start(channel)
-
 	var payload map[string]interface{}
 
+	log.Printf("Index %v is ready and waiting for messages", i.Config.Prefix)
 	for {
 		select {
 		case msg := <-channel:
