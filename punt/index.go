@@ -95,12 +95,14 @@ func (i *Index) Run() {
 	for {
 		select {
 		case msg := <-channel:
+			// Grab this in case our transformer modifies it
+			timestamp := msg["timestamp"].(time.Time)
+
 			payload, err = i.transformer.Transform(msg)
 			if err != nil {
 				log.Printf("Failed to transform message `%v`: %v", msg, err)
 			}
 
-			timestamp := msg["timestamp"].(time.Time)
 			indexString := i.Config.Prefix + timestamp.Format(i.Config.DateFormat)
 			payload["@timestamp"] = timestamp.Format("2006-01-02T15:04:05+00:00")
 

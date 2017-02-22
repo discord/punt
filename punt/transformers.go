@@ -41,7 +41,8 @@ func NewUnpackMergeTransformer(config map[string]interface{}) *UnpackMergeTransf
 }
 
 func (u *UnpackMergeTransformer) Transform(parts syslogparser.LogParts) (map[string]interface{}, error) {
-	err := json.Unmarshal([]byte(parts["content"].(string)), parts)
+	err := json.Unmarshal([]byte(parts["content"].(string)), &parts)
+	delete(parts, "content")
 	return parts, err
 }
 

@@ -3,6 +3,7 @@ package main
 import (
 	"../punt"
 	"flag"
+	"log"
 )
 
 var configPath = flag.String("config", "config.json", "path to json configuration file")
@@ -10,8 +11,9 @@ var configPath = flag.String("config", "config.json", "path to json configuratio
 func main() {
 	flag.Parse()
 	config, err := punt.LoadConfig(*configPath)
+
 	if err != nil {
-		panic(err)
+		log.Panicf("Failed to parse configuration: %v", err)
 	}
 
 	state := punt.NewState(config)
