@@ -22,7 +22,10 @@
     {
       "name": "test",
       "fields": {
-        "test": "text"
+        "test": {
+          "type": "text",
+          "index": true
+        }
       }
     }
   ]

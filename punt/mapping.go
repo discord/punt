@@ -5,10 +5,15 @@ import (
 	"gopkg.in/olivere/elastic.v5"
 )
 
+type MappingField struct {
+	Type  string `json:"type"`
+	Index bool   `json:"index"`
+}
+
 type Mapping struct {
-	Name   string            `json:"name"`
-	Fields map[string]string `json:"fields"`
-	All    bool              `json:"all"`
+	Name   string                  `json:"name"`
+	Fields map[string]MappingField `json:"fields"`
+	All    bool                    `json:"all"`
 }
 
 func (m Mapping) GenerateJSON() map[string]interface{} {
@@ -16,7 +21,10 @@ func (m Mapping) GenerateJSON() map[string]interface{} {
 
 	properties := make(map[string]interface{})
 	for k, v := range m.Fields {
-		properties[k] = map[string]string{"type": v}
+		properties[k] = map[string]interface{}{
+			"type":  v.Type,
+			"index": v.Index,
+		}
 	}
 
 	result["properties"] = properties
