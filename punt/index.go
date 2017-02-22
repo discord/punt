@@ -2,13 +2,13 @@ package punt
 
 import (
 	"crypto/tls"
-	"github.com/b1naryth1ef/syslogd"
-	"github.com/jeromer/syslogparser"
 	"gopkg.in/olivere/elastic.v5"
 	"log"
 	"net"
 	"strings"
 	"time"
+
+	"../syslog"
 )
 
 type IndexConfig struct {
@@ -19,6 +19,7 @@ type IndexConfig struct {
 	Prefix      string `json:"prefix"`
 	Type        string `json:"type"`
 	DateFormat  string `json:"date_format"`
+	BufferSize  int    `json:"buffer_size"`
 	Transformer struct {
 		Name   string                 `json:"name"`
 		Config map[string]interface{} `json:"config"`
@@ -30,7 +31,7 @@ type Index struct {
 	Config  IndexConfig
 
 	transformer Transformer
-	server      *syslogd.Server
+	server      *syslog.Server
 	exit        chan bool
 }
 
@@ -44,8 +45,18 @@ func NewIndex(config IndexConfig, cluster *Cluster) *Index {
 }
 
 func (i *Index) Run() {
-	channel := make(chan syslogparser.LogParts)
-	i.server = syslogd.NewServer(channel)
+	messages := make(chan syslog.SyslogData, i.Config.BufferSize)
+	errors := make(chan syslog.InvalidMessage)
+
+	i.server = syslog.NewServer(messages, errors)
+
+	// Debug errors
+	go func() {
+		for {
+			err := <-errors
+			log.Printf("Error reading incoming message (%v): %s", err.Error, err.Data)
+		}
+	}()
 
 	bindInfo := strings.SplitN(i.Config.Bind, ":", 2)
 
@@ -94,7 +105,7 @@ func (i *Index) Run() {
 	log.Printf("Index %v is ready and waiting for messages", i.Config.Prefix)
 	for {
 		select {
-		case msg := <-channel:
+		case msg := <-messages:
 			// Grab this in case our transformer modifies it
 			timestamp := msg["timestamp"].(time.Time)
 
@@ -113,7 +124,7 @@ func (i *Index) Run() {
 	}
 }
 
-func (i *Index) handleIncomingMessage(msg syslogparser.LogParts) error {
+func (i *Index) handleIncomingMessage(msg syslog.SyslogData) error {
 	payload, err := i.transformer.Transform(msg)
 	if err != nil {
 		return err

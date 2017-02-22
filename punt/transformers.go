@@ -1,12 +1,12 @@
 package punt
 
 import (
+	"../syslog"
 	"encoding/json"
-	"github.com/jeromer/syslogparser"
 )
 
 type Transformer interface {
-	Transform(parts syslogparser.LogParts) (map[string]interface{}, error)
+	Transform(parts syslog.SyslogData) (map[string]interface{}, error)
 }
 
 func GetTransformer(name string, config map[string]interface{}) Transformer {
@@ -29,7 +29,7 @@ func NewDirectTransformer(config map[string]interface{}) *DirectTransformer {
 	return &DirectTransformer{}
 }
 
-func (b *DirectTransformer) Transform(parts syslogparser.LogParts) (map[string]interface{}, error) {
+func (b *DirectTransformer) Transform(parts syslog.SyslogData) (map[string]interface{}, error) {
 	return parts, nil
 }
 
@@ -40,7 +40,7 @@ func NewUnpackMergeTransformer(config map[string]interface{}) *UnpackMergeTransf
 	return &UnpackMergeTransformer{}
 }
 
-func (u *UnpackMergeTransformer) Transform(parts syslogparser.LogParts) (map[string]interface{}, error) {
+func (u *UnpackMergeTransformer) Transform(parts syslog.SyslogData) (map[string]interface{}, error) {
 	err := json.Unmarshal([]byte(parts["content"].(string)), &parts)
 	delete(parts, "content")
 	return parts, err
@@ -53,7 +53,7 @@ func NewUnpackTakeTransformer(config map[string]interface{}) *UnpackTakeTransfor
 	return &UnpackTakeTransformer{}
 }
 
-func (u *UnpackTakeTransformer) Transform(parts syslogparser.LogParts) (map[string]interface{}, error) {
+func (u *UnpackTakeTransformer) Transform(parts syslog.SyslogData) (map[string]interface{}, error) {
 	var data map[string]interface{}
 	err := json.Unmarshal([]byte(parts["content"].(string)), &data)
 	return data, err
