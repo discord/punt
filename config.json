@@ -5,6 +5,7 @@
       "num_workers": 4,
       "bulk_size": 3,
       "buffer_size": 24000,
+      "commit_interval": 5,
       "server": {
         "type": "tcp",
         "bind": "localhost:5678"
@@ -12,7 +13,7 @@
     }
   },
   "types": {
-    "test": {
+    "*": {
       "prefix": "test-",
       "mapping_type": "test",
       "date_format": "2006.01.02.15",

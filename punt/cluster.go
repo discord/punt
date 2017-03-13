@@ -6,6 +6,7 @@ import (
 	"gopkg.in/olivere/elastic.v5"
 	"log"
 	"net"
+	"sync"
 	"time"
 
 	"../syslog"
@@ -20,11 +21,12 @@ type ClusterServerConfig struct {
 }
 
 type ClusterConfig struct {
-	URL        string              `json:"url"`
-	NumWorkers int                 `json:"num_workers"`
-	BulkSize   int                 `json:"bulk_size"`
-	BufferSize int                 `json:"buffer_size"`
-	Server     ClusterServerConfig `json:"server"`
+	URL            string              `json:"url"`
+	NumWorkers     int                 `json:"num_workers"`
+	BulkSize       int                 `json:"bulk_size"`
+	CommitInterval int                 `json:"commit_interval"`
+	BufferSize     int                 `json:"buffer_size"`
+	Server         ClusterServerConfig `json:"server"`
 }
 
 type Cluster struct {
@@ -118,7 +120,6 @@ func (c *Cluster) runServer() {
 		} else {
 			server, err = net.Listen("tcp", c.Config.Server.Bind)
 		}
-		log.Printf("%v", c.Config.Server.Bind)
 		c.server.AddTCPListener(server)
 	} else if c.Config.Server.Type == "udp" {
 		addr, err := net.ResolveUDPAddr("udp", c.Config.Server.Bind)
@@ -180,6 +181,7 @@ func (c *Cluster) runServer() {
 type ClusterWorker struct {
 	Cluster *Cluster
 
+	lock   *sync.RWMutex
 	exit   chan bool
 	esBulk *elastic.BulkService
 }
@@ -187,30 +189,56 @@ type ClusterWorker struct {
 func NewClusterWorker(cluster *Cluster) *ClusterWorker {
 	return &ClusterWorker{
 		Cluster: cluster,
+		lock:    &sync.RWMutex{},
 		exit:    make(chan bool, 0),
 	}
 }
 
 func (cw *ClusterWorker) run() {
+	cw.esBulk = cw.Cluster.esClient.Bulk()
+
+	if cw.Cluster.Config.CommitInterval > 0 {
+		go cw.commitLoop(cw.Cluster.Config.CommitInterval)
+	}
+
 	for {
 		select {
 		case request := <-cw.Cluster.Incoming:
-			if cw.esBulk == nil {
-				cw.esBulk = cw.Cluster.esClient.Bulk()
-			}
+			// Grab a read lock
+			cw.lock.RLock()
 
+			// Add our index request to the bulk request
 			cw.esBulk.Add(request)
 
+			// If we're above the bulk size request a commit (new goroutine to avoid deadlock)
 			if cw.esBulk.NumberOfActions() >= cw.Cluster.Config.BulkSize {
-				cw.writeToElastic()
+				go cw.commit()
 			}
+			cw.lock.RUnlock()
 		case <-cw.exit:
 			return
 		}
 	}
 }
 
-func (cw *ClusterWorker) writeToElastic() {
+func (cw *ClusterWorker) commitLoop(interval int) {
+	timer := time.NewTicker(time.Duration(interval) * time.Second)
+
+	for {
+		<-timer.C
+
+		cw.lock.RLock()
+		if cw.esBulk.NumberOfActions() > 0 {
+			go cw.commit()
+		}
+		cw.lock.RUnlock()
+	}
+}
+
+func (cw *ClusterWorker) commit() {
+	cw.lock.Lock()
+	defer cw.lock.Unlock()
+
 	ctx := context.Background()
 	_, err := cw.esBulk.Do(ctx)
 
@@ -218,5 +246,5 @@ func (cw *ClusterWorker) writeToElastic() {
 		log.Printf("Failed to write to ES: %v", err)
 	}
 
-	cw.esBulk = nil
+	cw.esBulk = cw.Cluster.esClient.Bulk()
 }
