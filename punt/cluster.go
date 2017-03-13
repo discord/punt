@@ -2,27 +2,47 @@ package punt
 
 import (
 	"context"
+	"crypto/tls"
 	"gopkg.in/olivere/elastic.v5"
 	"log"
+	"net"
+	"time"
+
+	"../syslog"
 )
 
+type ClusterServerConfig struct {
+	Type     string `json:"type"`
+	Bind     string `json:"bind"`
+	Port     uint   `json:"port"`
+	CertFile string `json:"tls_cert_file"`
+	KeyFile  string `json:"tls_key_file"`
+}
+
 type ClusterConfig struct {
-	URL        string `json:"url"`
-	NumWorkers int    `json:"num_workers"`
-	BulkSize   int    `json:"bulk_size"`
+	URL        string              `json:"url"`
+	NumWorkers int                 `json:"num_workers"`
+	BulkSize   int                 `json:"bulk_size"`
+	BufferSize int                 `json:"buffer_size"`
+	Server     ClusterServerConfig `json:"server"`
 }
 
 type Cluster struct {
+	Name     string
+	State    *State
 	Config   ClusterConfig
 	Incoming chan *elastic.BulkIndexRequest
 
+	server   *syslog.Server
 	exit     chan bool
 	workers  []*ClusterWorker
 	esClient *elastic.Client
 }
 
-func NewCluster(config ClusterConfig) *Cluster {
+func NewCluster(state *State, name string, config ClusterConfig) *Cluster {
 	return &Cluster{
+		Name:     name,
+		State:    state,
 		Config:   config,
 		Incoming: make(chan *elastic.BulkIndexRequest),
 		exit:     make(chan bool),
@@ -37,6 +57,7 @@ func (c *Cluster) Run() error {
 	}
 	c.esClient = client
 
+	// Set the global number of relicas to 0
 	// TODO: config this
 	payload := make(map[string]interface{})
 	index := make(map[string]interface{})
@@ -46,14 +67,12 @@ func (c *Cluster) Run() error {
 	ctx := context.Background()
 	_, err = c.esClient.IndexPutSettings("_all").BodyJson(payload).Do(ctx)
 	if err != nil {
-		log.Printf("Fail: %v", err)
+		log.Printf("Failed to set global replica count: %v", err)
 	}
 
 	c.spawnWorkers()
-	return nil
-}
+	go c.runServer()
 
-func (c *Cluster) Ingest(payload map[string]interface{}) error {
 	return nil
 }
 
@@ -61,6 +80,100 @@ func (c *Cluster) spawnWorkers() {
 	for i := 0; i < c.Config.NumWorkers; i++ {
 		c.workers = append(c.workers, NewClusterWorker(c))
 		go c.workers[len(c.workers)-1].run()
+	}
+}
+
+func (c *Cluster) runServer() {
+	messages := make(chan syslog.SyslogData, c.Config.BufferSize)
+	errors := make(chan syslog.InvalidMessage)
+
+	c.server = syslog.NewServer(messages, errors)
+
+	// Debug errors
+	go func() {
+		for {
+			err := <-errors
+			log.Printf("Error reading incoming message (%v): %s", err.Error, err.Data)
+		}
+	}()
+
+	var err error
+
+	if c.Config.Server.Bind == "" {
+		log.Panicf("Cannot bind to empty address")
+	}
+
+	if c.Config.Server.Type == "tcp" {
+		var server net.Listener
+
+		if c.Config.Server.CertFile != "" {
+			cert, err := tls.LoadX509KeyPair(c.Config.Server.CertFile, c.Config.Server.KeyFile)
+
+			if err != nil {
+				log.Panicf("Failed to load X509 TLS Certificate: %v", err)
+			}
+
+			config := tls.Config{Certificates: []tls.Certificate{cert}}
+			server, err = tls.Listen("tcp", c.Config.Server.Bind, &config)
+		} else {
+			server, err = net.Listen("tcp", c.Config.Server.Bind)
+		}
+		log.Printf("%v", c.Config.Server.Bind)
+		c.server.AddTCPListener(server)
+	} else if c.Config.Server.Type == "udp" {
+		addr, err := net.ResolveUDPAddr("udp", c.Config.Server.Bind)
+
+		if err != nil {
+			log.Panicf("Failed to resolve UDP bind address: %v (%v)", err, c.Config.Server.Bind)
+		}
+
+		server, err := net.ListenUDP("udp", addr)
+		c.server.AddUDPListener(server)
+	} else {
+		log.Panicf("Invalid server type: %v", c.Config.Server.Type)
+	}
+
+	if err != nil {
+		log.Panicf("Failed to bind: %v", err)
+	}
+
+	var payload map[string]interface{}
+
+	log.Printf("Cluster %v is listening for syslog messages...", c.Name)
+
+	for {
+		select {
+		case msg := <-messages:
+			// Attempt to select the type based on the syslog tag
+			var typ *Type
+
+			typ = c.State.Types[msg["tag"].(string)]
+
+			if typ == nil {
+				typ = c.State.Types["*"]
+
+				if typ == nil {
+					log.Printf("Warning, recieved unhandled tag %v", msg["tag"].(string))
+					continue
+				}
+			}
+
+			// Grab this in case our transformer modifies it
+			timestamp := msg["timestamp"].(time.Time)
+
+			// Transform the message using the type properties
+			payload, err = typ.Transformer.Transform(msg)
+			if err != nil {
+				log.Printf("Failed to transform message `%v`: %v", msg, err)
+			}
+
+			indexString := typ.Config.Prefix + timestamp.Format(typ.Config.DateFormat)
+			payload["@timestamp"] = timestamp.Format("2006-01-02T15:04:05+00:00")
+
+			c.Incoming <- elastic.NewBulkIndexRequest().Index(indexString).Type(typ.Config.MappingType).Doc(payload)
+		case <-c.exit:
+			return
+		}
 	}
 }
 

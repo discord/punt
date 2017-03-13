@@ -7,7 +7,7 @@ import (
 
 type Config struct {
 	Clusters map[string]ClusterConfig `json:"clusters"`
-	Indexes  []IndexConfig            `json:"indexes"`
+	Types    map[string]TypeConfig    `json:"types"`
 	Mappings []Mapping                `json:"mappings"`
 }
 

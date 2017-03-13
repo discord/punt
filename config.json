@@ -3,30 +3,23 @@
     "default": {
       "url": "http://localhost:9200",
       "num_workers": 4,
-      "bulk_size": 3
+      "bulk_size": 3,
+      "buffer_size": 24000,
+      "server": {
+        "type": "tcp",
+        "bind": "localhost:5678"
+      }
     }
   },
-  "indexes": [
-    {
-      "bind": "udp:localhost:5678",
-      "cluster": "default",
+  "types": {
+    "test": {
       "prefix": "test-",
-      "type": "test",
+      "mapping_type": "test",
       "date_format": "2006.01.02.15",
       "transformer": {
         "name": "direct"
       }
     }
-  ],
-  "mappings": [
-    {
-      "name": "test",
-      "fields": {
-        "test": {
-          "type": "text",
-          "index": true
-        }
-      }
-    }
-  ]
+  },
+  "mappings": []
 }
