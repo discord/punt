@@ -2,6 +2,7 @@ package syslog
 
 import (
 	"errors"
+	"log"
 	"net"
 	"regexp"
 	"strconv"
@@ -30,6 +31,13 @@ type Server struct {
 	Mode     int
 	Messages chan SyslogData
 	Errors   chan InvalidMessage
+}
+
+type ConnState struct {
+	Addr   string
+	Buffer []byte
+	Size   int
+	OctLen int
 }
 
 type udpReadFunc func([]byte) (int, net.Addr, error)
@@ -65,8 +73,13 @@ func (s *Server) handleTCP(conn net.Listener) {
 		var err error
 		var msg SyslogMessage
 
-		addr := client.RemoteAddr().String()
-		buf := make([]byte, 4096)
+		state := ConnState{
+			Addr:   client.RemoteAddr().String(),
+			Buffer: make([]byte, 0),
+			Size:   0,
+		}
+
+		buf := make([]byte, 64000)
 
 		for {
 			sz, err = client.Read(buf)
@@ -75,7 +88,10 @@ func (s *Server) handleTCP(conn net.Listener) {
 				break
 			}
 
-			s.handlePayload(&msg, string(buf[:sz]), addr)
+			state.Size += sz
+			state.Buffer = append(state.Buffer, buf[:sz]...)
+
+			s.handlePayloadSafe(&msg, &state)
 		}
 	}
 
@@ -95,59 +111,84 @@ func (s *Server) handleUDP(read udpReadFunc) {
 	var err error
 	var msg SyslogMessage
 
-	buf := make([]byte, 32000)
+	state := ConnState{
+		Buffer: make([]byte, 32000),
+	}
 
 	for {
+		sz, addr, err = read(state.Buffer)
 
-		sz, addr, err = read(buf)
+		state.Size = sz
+		state.Addr = addr.String()
 
 		if err != nil || sz <= 0 {
 			break
 		}
 
-		s.handlePayload(&msg, string(buf[:sz]), addr.String())
+		s.handlePayloadSafe(&msg, &state)
 	}
 }
 
-func (s *Server) handlePayload(msg *SyslogMessage, buf string, addr string) {
+func (s *Server) handlePayloadSafe(msg *SyslogMessage, state *ConnState) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Recovered from handlePayload: %v / `%v`", r, state.Buffer)
+		}
+	}()
+
+	s.handlePayload(msg, state)
+}
+
+func (s *Server) handlePayload(msg *SyslogMessage, state *ConnState) {
 	var lines []string
 
 	// New line delimited
 	if s.Mode == MODE_DELIMITER {
-		lines = strings.Split(buf, "\n")
+		lines = strings.Split(string(state.Buffer[:state.Size]), "\n")
 	} else if s.Mode == MODE_OCTET_COUNTED {
 		for {
-			if len(buf) == 0 {
+			if len(state.Buffer) == 0 {
 				break
 			}
 
-			// Find an octet count
-			match := OctetRe.Find([]byte(buf))
-			if match == nil {
-				s.Errors <- InvalidMessage{Data: buf, Error: InvalidOctetErr}
-				return
+			// If this isn't a continuation on a previous payload, read the octet length
+			if state.OctLen == 0 {
+				// Find an octet count
+				match := OctetRe.Find(state.Buffer)
+				if match == nil {
+					s.Errors <- InvalidMessage{Data: string(state.Buffer), Error: InvalidOctetErr}
+					return
+				}
+
+				// Convert to an integer
+				size, err := strconv.Atoi(string(match))
+				if err != nil {
+					s.Errors <- InvalidMessage{Data: string(state.Buffer), Error: err}
+					return
+				}
+
+				state.OctLen = size
 			}
 
-			// Convert to an integer
-			size, err := strconv.Atoi(string(match))
-			if err != nil {
-				s.Errors <- InvalidMessage{Data: buf, Error: err}
-				return
-			}
+			if len(state.Buffer) >= state.OctLen {
+				offset := len(strconv.FormatInt(int64(state.OctLen), 10)) + 1
+				lines = append(lines, string(state.Buffer[offset:offset+state.OctLen]))
 
-			offset := len(match) + 1
-			lines = append(lines, string(buf[offset:offset+size]))
-			if len(buf)-size <= 0 {
+				if len(state.Buffer)-state.OctLen > 0 {
+					state.Buffer = state.Buffer[offset+state.OctLen:]
+				}
+
+				state.OctLen = 0
+			} else {
+				// Waiting for more
 				break
 			}
-
-			buf = buf[offset+size:]
 		}
 	}
 
 	for _, line := range lines {
 		if len(line) > 0 {
-			s.parse(msg, line, addr)
+			s.parse(msg, line, state.Addr)
 		}
 	}
 }

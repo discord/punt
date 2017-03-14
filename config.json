@@ -7,11 +7,11 @@
       "buffer_size": 24000,
       "commit_interval": 5,
       "server": {
-        "type": "tcp",
+        "type": "udp",
         "bind": "localhost:5678"
       },
       "debug": true,
-      "octet_counted": true
+      "octet_counted": false
     }
   },
   "types": {
