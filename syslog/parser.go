@@ -39,17 +39,17 @@ func (sm *SyslogMessage) ToMapping() map[string]interface{} {
 	}
 }
 
-func ParseRFC3164(data []byte) (*SyslogMessage, error) {
+func ParseRFC3164(data string) (*SyslogMessage, error) {
 	msg := &SyslogMessage{}
 	return msg, ParseRFC3164Inplace(msg, data)
 }
 
 // A parser which dumps results into an existing SyslogMessage struct. This can
 //  be used for better performance and to avoid allocations
-func ParseRFC3164Inplace(msg *SyslogMessage, data []byte) error {
+func ParseRFC3164Inplace(msg *SyslogMessage, data string) error {
 	var err error
 
-	found := RFC3164.FindAllStringSubmatch(string(data), -1)
+	found := RFC3164.FindAllStringSubmatch(data, -1)
 
 	// If we don't have anything in the array, we didn't even match
 	if len(found) == 0 {

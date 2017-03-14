@@ -1,25 +1,42 @@
 package syslog
 
 import (
+	"errors"
 	"net"
+	"regexp"
+	"strconv"
+	"strings"
+)
+
+const (
+	MODE_DELIMITER = iota
+	MODE_OCTET_COUNTED
+)
+
+var (
+	OctetRe = regexp.MustCompile(`^(\d+)`)
+
+	InvalidOctetErr = errors.New("Invalid Octet Prefix")
 )
 
 type SyslogData map[string]interface{}
 
 type InvalidMessage struct {
-	Data  []byte
+	Data  string
 	Error error
 }
 
 type Server struct {
+	Mode     int
 	Messages chan SyslogData
 	Errors   chan InvalidMessage
 }
 
 type udpReadFunc func([]byte) (int, net.Addr, error)
 
-func NewServer(messages chan SyslogData, errors chan InvalidMessage) *Server {
+func NewServer(mode int, messages chan SyslogData, errors chan InvalidMessage) *Server {
 	return &Server{
+		Mode:     mode,
 		Messages: messages,
 		Errors:   errors,
 	}
@@ -58,7 +75,7 @@ func (s *Server) handleTCP(conn net.Listener) {
 				break
 			}
 
-			s.parse(&msg, buf[:sz], addr)
+			s.handlePayload(&msg, string(buf[:sz]), addr)
 		}
 	}
 
@@ -81,17 +98,61 @@ func (s *Server) handleUDP(read udpReadFunc) {
 	buf := make([]byte, 32000)
 
 	for {
+
 		sz, addr, err = read(buf)
 
 		if err != nil || sz <= 0 {
 			break
 		}
 
-		s.parse(&msg, buf[:sz], addr.String())
+		s.handlePayload(&msg, string(buf[:sz]), addr.String())
 	}
 }
 
-func (s *Server) parse(msg *SyslogMessage, data []byte, addr string) {
+func (s *Server) handlePayload(msg *SyslogMessage, buf string, addr string) {
+	var lines []string
+
+	// New line delimited
+	if s.Mode == MODE_DELIMITER {
+		lines = strings.Split(buf, "\n")
+	} else if s.Mode == MODE_OCTET_COUNTED {
+		for {
+			if len(buf) == 0 {
+				break
+			}
+
+			// Find an octet count
+			match := OctetRe.Find([]byte(buf))
+			if match == nil {
+				s.Errors <- InvalidMessage{Data: buf, Error: InvalidOctetErr}
+				return
+			}
+
+			// Convert to an integer
+			size, err := strconv.Atoi(string(match))
+			if err != nil {
+				s.Errors <- InvalidMessage{Data: buf, Error: err}
+				return
+			}
+
+			offset := len(match) + 1
+			lines = append(lines, string(buf[offset:offset+size]))
+			if len(buf)-size <= 0 {
+				break
+			}
+
+			buf = buf[offset+size:]
+		}
+	}
+
+	for _, line := range lines {
+		if len(line) > 0 {
+			s.parse(msg, line, addr)
+		}
+	}
+}
+
+func (s *Server) parse(msg *SyslogMessage, data string, addr string) {
 	// Parse the syslog message
 	err := ParseRFC3164Inplace(msg, data)
 

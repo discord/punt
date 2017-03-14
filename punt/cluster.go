@@ -27,6 +27,8 @@ type ClusterConfig struct {
 	CommitInterval int                 `json:"commit_interval"`
 	BufferSize     int                 `json:"buffer_size"`
 	Server         ClusterServerConfig `json:"server"`
+	OctetCounted   bool                `json:"octet_counted"`
+	Debug          bool                `json:"debug"`
 }
 
 type Cluster struct {
@@ -89,7 +91,11 @@ func (c *Cluster) runServer() {
 	messages := make(chan syslog.SyslogData, c.Config.BufferSize)
 	errors := make(chan syslog.InvalidMessage)
 
-	c.server = syslog.NewServer(messages, errors)
+	if c.Config.OctetCounted {
+		c.server = syslog.NewServer(syslog.MODE_OCTET_COUNTED, messages, errors)
+	} else {
+		c.server = syslog.NewServer(syslog.MODE_DELIMITER, messages, errors)
+	}
 
 	// Debug errors
 	go func() {
@@ -171,6 +177,10 @@ func (c *Cluster) runServer() {
 			indexString := typ.Config.Prefix + timestamp.Format(typ.Config.DateFormat)
 			payload["@timestamp"] = timestamp.Format("2006-01-02T15:04:05+00:00")
 
+			if c.Config.Debug {
+				log.Printf("R: %v", payload)
+			}
+
 			c.Incoming <- elastic.NewBulkIndexRequest().Index(indexString).Type(typ.Config.MappingType).Doc(payload)
 		case <-c.exit:
 			return
@@ -238,6 +248,14 @@ func (cw *ClusterWorker) commitLoop(interval int) {
 func (cw *ClusterWorker) commit() {
 	cw.lock.Lock()
 	defer cw.lock.Unlock()
+
+	if cw.esBulk.NumberOfActions() <= 0 {
+		return
+	}
+
+	if cw.Cluster.Config.Debug {
+		log.Printf("Commiting %s entries", cw.esBulk.NumberOfActions())
+	}
 
 	ctx := context.Background()
 	_, err := cw.esBulk.Do(ctx)

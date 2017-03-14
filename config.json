@@ -9,7 +9,9 @@
       "server": {
         "type": "tcp",
         "bind": "localhost:5678"
-      }
+      },
+      "debug": true,
+      "octet_counted": true
     }
   },
   "types": {
