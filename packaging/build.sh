@@ -12,10 +12,10 @@ pushd build
 mkdir -p usr/bin
 
 # Build punt
-go build ../..
+go build ../../cmd/puntd.go
 
 # Copy files in place
-mv punt usr/bin/
+mv puntd usr/bin/
 
 popd
 
