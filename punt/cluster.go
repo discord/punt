@@ -15,7 +15,6 @@ import (
 type ClusterServerConfig struct {
 	Type     string `json:"type"`
 	Bind     string `json:"bind"`
-	Port     uint   `json:"port"`
 	CertFile string `json:"tls_cert_file"`
 	KeyFile  string `json:"tls_key_file"`
 }
