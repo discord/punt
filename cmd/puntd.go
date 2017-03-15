@@ -21,7 +21,7 @@ func main() {
 
 	// Print the help message (and exit) if requested
 	if *version {
-		fmt.Printf("puntd v%v", VERSION)
+		fmt.Printf("puntd v%v\n", VERSION)
 		return
 	}
 
