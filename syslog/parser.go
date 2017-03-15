@@ -8,10 +8,11 @@ import (
 )
 
 var (
-	RFC3164 = regexp.MustCompile(`<([0-9]+)>([A-Z][a-z][a-z]\s{1,2}\d{1,2}\s\d{2}[:]\d{2}[:]\d{2})\s([\w][\w\d\.@-]*)\s([^:[ ]+)[:[ ](.*)`)
+	RFC3164 = regexp.MustCompile(`<([0-9]+)>([A-Z][a-z][a-z]\s{1,2}\d{1,2}\s\d{2}[:]\d{2}[:]\d{2})\s([\w][\w\d\.@-]*)\s([^: []+)(?:\[([0-9]+)\])?[: [](.*)`)
 
 	InvalidMessageError   = errors.New("Invalid Message")
 	InvalidPriortyError   = errors.New("Invalid Priority")
+	InvalidPIDError       = errors.New("Invalid PID")
 	InvalidTimestampError = errors.New("Invalid Timestamp")
 
 	timestampFormats = []string{
@@ -27,6 +28,7 @@ type SyslogMessage struct {
 	Timestamp time.Time
 	Hostname  string
 	Tag       string
+	PID       int
 	Content   string
 }
 
@@ -37,6 +39,7 @@ func (sm *SyslogMessage) ToMapping() map[string]interface{} {
 		"timestamp": sm.Timestamp,
 		"hostname":  sm.Hostname,
 		"tag":       sm.Tag,
+		"pid":       sm.PID,
 		"content":   sm.Content,
 	}
 }
@@ -90,6 +93,14 @@ func ParseRFC3164Inplace(msg *SyslogMessage, data string) error {
 
 	msg.Hostname = found[0][3]
 	msg.Tag = found[0][4]
-	msg.Content = found[0][5]
+
+	if found[0][5] != "" {
+		msg.PID, err = strconv.Atoi(found[0][5])
+		if err != nil {
+			return InvalidPIDError
+		}
+	}
+
+	msg.Content = found[0][6]
 	return nil
 }

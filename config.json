@@ -12,7 +12,7 @@
       "servers": [
         {
           "type": "udp",
-          "bind": "localhost:5678",
+          "bind": "localhost:5679",
           "buffer_size": 10
         },
         {

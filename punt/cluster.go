@@ -6,6 +6,7 @@ import (
 	"gopkg.in/olivere/elastic.v5"
 	"log"
 	"net"
+	"os"
 	"sync"
 	"time"
 
@@ -43,19 +44,27 @@ type Cluster struct {
 	Config   ClusterConfig
 	Incoming chan *elastic.BulkIndexRequest
 
+	messages    chan syslog.SyslogData
+	hostname    string
 	reliability int
-	server      *syslog.Server
 	exit        chan bool
 	workers     []*ClusterWorker
 	esClient    *elastic.Client
 }
 
 func NewCluster(state *State, name string, config ClusterConfig) *Cluster {
+	name, err := os.Hostname()
+	if err != nil {
+		log.Panicf("Failed to get hostname: %v", err)
+	}
+
 	return &Cluster{
 		Name:     name,
 		State:    state,
 		Config:   config,
 		Incoming: make(chan *elastic.BulkIndexRequest),
+		messages: make(chan syslog.SyslogData, 0),
+		hostname: name,
 		exit:     make(chan bool),
 		workers:  make([]*ClusterWorker, 0),
 	}
@@ -90,6 +99,7 @@ func (c *Cluster) Run() error {
 
 	// Spawn servers, which recieve incoming messages and pass them to workers
 	c.spawnServers()
+	log.Printf("  completed startup")
 
 	return nil
 }
@@ -102,12 +112,15 @@ func (c *Cluster) spawnWorkers() {
 }
 
 func (c *Cluster) spawnServers() {
-	for _, serverConfig := range c.Config.Servers {
-		go c.runServer(serverConfig)
+	for idx := range c.Config.Servers {
+		serverConfig := c.Config.Servers[idx]
+		c.startServer(serverConfig)
 	}
 }
 
-func (c *Cluster) runServer(config ClusterServerConfig) {
+func (c *Cluster) startServer(config ClusterServerConfig) {
+	var syslogServer *syslog.Server
+
 	messages := make(chan syslog.SyslogData, config.BufferSize)
 	errors := make(chan syslog.InvalidMessage)
 
@@ -117,22 +130,27 @@ func (c *Cluster) runServer(config ClusterServerConfig) {
 	}
 
 	// If we're using TCP and want to octect count, set that here
-	if config.Type != "tcp" {
+	if config.Type == "tcp" {
 		if config.OctetCounted {
 			serverConfig.TCPFrameMode = syslog.FRAME_MODE_OCTET_COUNTED
 		}
 	}
 
-	c.server = syslog.NewServer(&serverConfig, messages, errors)
+	syslogServer = syslog.NewServer(&serverConfig, messages, errors)
 
 	// Loop over and consume error payloads, this has inherent backoff within the
 	//  sending side as the channel is async-sent to.
 	go func() {
-		var err syslog.InvalidMessage
-
-		for {
-			err = <-errors
+		for err := range errors {
 			log.Printf("Error reading incoming message (%v): %s", err.Error, err.Data)
+		}
+	}()
+
+	// Loop over and consume syslog payloads, redirecting them to our global worker
+	//  queue.
+	go func() {
+		for msg := range messages {
+			c.messages <- msg
 		}
 	}()
 
@@ -158,7 +176,7 @@ func (c *Cluster) runServer(config ClusterServerConfig) {
 		} else {
 			server, err = net.Listen("tcp", config.Bind)
 		}
-		c.server.AddTCPListener(server)
+		syslogServer.AddTCPListener(server)
 	} else if config.Type == "udp" {
 		addr, err := net.ResolveUDPAddr("udp", config.Bind)
 
@@ -167,7 +185,7 @@ func (c *Cluster) runServer(config ClusterServerConfig) {
 		}
 
 		server, err := net.ListenUDP("udp", addr)
-		c.server.AddUDPListener(server)
+		syslogServer.AddUDPListener(server)
 	} else {
 		log.Panicf("Invalid server type: %v", config.Type)
 	}
@@ -176,53 +194,14 @@ func (c *Cluster) runServer(config ClusterServerConfig) {
 		log.Panicf("Failed to bind: %v", err)
 	}
 
-	var payload map[string]interface{}
-
 	log.Printf("  successfully started server %v:%v", config.Type, config.Bind)
 
-	for {
-		select {
-		case msg := <-messages:
-			// Attempt to select the type based on the syslog tag
-			var typ *Type
-
-			typ = c.State.Types[msg["tag"].(string)]
-
-			if typ == nil {
-				typ = c.State.Types["*"]
-
-				if typ == nil {
-					log.Printf("Warning, recieved unhandled tag %v", msg["tag"].(string))
-					continue
-				}
-			}
-
-			// Grab this in case our transformer modifies it
-			timestamp := msg["timestamp"].(time.Time)
-
-			// Transform the message using the type properties
-			payload, err = typ.Transformer.Transform(msg)
-			if err != nil {
-				log.Printf("Failed to transform message `%v`: %v", msg, err)
-			}
-
-			indexString := typ.Config.Prefix + timestamp.Format(typ.Config.DateFormat)
-			payload["@timestamp"] = timestamp.Format("2006-01-02T15:04:05+00:00")
-
-			if c.Config.Debug {
-				log.Printf("(%v) %v", indexString, payload)
-			}
-
-			c.Incoming <- elastic.NewBulkIndexRequest().Index(indexString).Type(typ.Config.MappingType).Doc(payload)
-		case <-c.exit:
-			return
-		}
-	}
 }
 
 type ClusterWorker struct {
 	Cluster *Cluster
 
+	name   string
 	lock   *sync.RWMutex
 	exit   chan bool
 	esBulk *elastic.BulkService
@@ -243,14 +222,48 @@ func (cw *ClusterWorker) run() {
 		go cw.commitLoop(cw.Cluster.Config.CommitInterval)
 	}
 
+	var err error
+	var payload map[string]interface{}
+
 	for {
 		select {
-		case request := <-cw.Cluster.Incoming:
+		case msg := <-cw.Cluster.messages:
+			// Attempt to select the type based on the syslog tag
+			var typ *Type
+
+			typ = cw.Cluster.State.Types[msg["tag"].(string)]
+
+			if typ == nil {
+				typ = cw.Cluster.State.Types["*"]
+
+				if typ == nil {
+					log.Printf("Warning, recieved unhandled tag %v", msg["tag"].(string))
+					continue
+				}
+			}
+
+			// Grab this in case our transformer modifies it
+			timestamp := msg["timestamp"].(time.Time)
+
+			// Transform the message using the type properties
+			payload, err = typ.Transformer.Transform(msg)
+			if err != nil {
+				log.Printf("Failed to transform message `%v`: %v", msg, err)
+			}
+
+			indexString := typ.Config.Prefix + timestamp.Format(typ.Config.DateFormat)
+			payload["@timestamp"] = timestamp.Format("2006-01-02T15:04:05+00:00")
+			payload["punt-server"] = cw.Cluster.hostname
+
+			if cw.Cluster.Config.Debug {
+				log.Printf("(%v) %v", indexString, payload)
+			}
+
 			// Grab a read lock
 			cw.lock.RLock()
 
 			// Add our index request to the bulk request
-			cw.esBulk.Add(request)
+			cw.esBulk.Add(elastic.NewBulkIndexRequest().Index(indexString).Type(typ.Config.MappingType).Doc(payload))
 
 			// If we're above the bulk size request a commit (new goroutine to avoid deadlock)
 			if cw.esBulk.NumberOfActions() >= cw.Cluster.Config.BulkSize {
