@@ -177,7 +177,7 @@ func (c *Cluster) runServer() {
 			payload["@timestamp"] = timestamp.Format("2006-01-02T15:04:05+00:00")
 
 			if c.Config.Debug {
-				log.Printf("R: %v", payload)
+				log.Printf("(%v) %v", indexString, payload)
 			}
 
 			c.Incoming <- elastic.NewBulkIndexRequest().Index(indexString).Type(typ.Config.MappingType).Doc(payload)
@@ -253,7 +253,7 @@ func (cw *ClusterWorker) commit() {
 	}
 
 	if cw.Cluster.Config.Debug {
-		log.Printf("Commiting %s entries", cw.esBulk.NumberOfActions())
+		log.Printf("Commiting %v entries", cw.esBulk.NumberOfActions())
 	}
 
 	ctx := context.Background()
