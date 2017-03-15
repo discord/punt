@@ -2,16 +2,27 @@
   "clusters": {
     "default": {
       "url": "http://localhost:9200",
-      "num_workers": 4,
+      "num_workers": 1,
       "bulk_size": 3,
-      "buffer_size": 24000,
-      "commit_interval": 5,
-      "server": {
-        "type": "udp",
-        "bind": "localhost:5678"
+      "commit_interval": 0,
+      "reliability": {
+        "insert_retries": 3,
+        "retry_delay": 1500
       },
-      "debug": true,
-      "octet_counted": false
+      "servers": [
+        {
+          "type": "udp",
+          "bind": "localhost:5678",
+          "buffer_size": 10
+        },
+        {
+          "type": "tcp",
+          "bind": "localhost:5678",
+          "buffer_size": 10,
+          "octet_counted": true
+        }
+      ],
+      "debug": true
     }
   },
   "types": {

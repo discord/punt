@@ -10,8 +10,10 @@ import (
 )
 
 const (
-	MODE_DELIMITER = iota
-	MODE_OCTET_COUNTED
+	FRAME_MODE_DELIMITER = iota
+	FRAME_MODE_OCTET_COUNTED
+
+	FORMAT_RFC3164 = iota
 )
 
 var (
@@ -20,20 +22,34 @@ var (
 	InvalidOctetErr = errors.New("Invalid Octet Prefix")
 )
 
+// A wrapper type for structured SyslogData
 type SyslogData map[string]interface{}
 
+// Struct which contains an invalid Syslog message that failed to parse. This
+//  can be used to introspect and monitor errors.
 type InvalidMessage struct {
 	Data  string
 	Error error
 }
 
-type Server struct {
-	Mode     int
-	Messages chan SyslogData
-	Errors   chan InvalidMessage
+// Used to configure the Syslog Server
+type ServerConfig struct {
+	// The TCP framing mode to operate in (only valid for TCP)
+	TCPFrameMode int
+
+	// The syslog format to use
+	Format int
 }
 
-type ConnState struct {
+type Server struct {
+	Messages chan SyslogData
+	Errors   chan InvalidMessage
+
+	parser ParserInplaceFunc
+	config *ServerConfig
+}
+
+type connState struct {
 	Addr   string
 	Buffer []byte
 	Size   int
@@ -42,12 +58,20 @@ type ConnState struct {
 
 type udpReadFunc func([]byte) (int, net.Addr, error)
 
-func NewServer(mode int, messages chan SyslogData, errors chan InvalidMessage) *Server {
-	return &Server{
-		Mode:     mode,
+func NewServer(config *ServerConfig, messages chan SyslogData, errors chan InvalidMessage) *Server {
+	server := Server{
 		Messages: messages,
 		Errors:   errors,
+		config:   config,
 	}
+
+	if config.Format == FORMAT_RFC3164 {
+		server.parser = ParseRFC3164Inplace
+	} else {
+		log.Panicf("Unknown syslog format: %v", config.Format)
+	}
+
+	return &server
 }
 
 func (s *Server) AddUDPListener(li net.Conn) {
@@ -73,7 +97,7 @@ func (s *Server) handleTCP(conn net.Listener) {
 		var err error
 		var msg SyslogMessage
 
-		state := ConnState{
+		state := connState{
 			Addr:   client.RemoteAddr().String(),
 			Buffer: make([]byte, 0),
 			Size:   0,
@@ -111,7 +135,7 @@ func (s *Server) handleUDP(read udpReadFunc) {
 	var err error
 	var msg SyslogMessage
 
-	state := ConnState{
+	state := connState{
 		Buffer: make([]byte, 32000),
 	}
 
@@ -129,7 +153,7 @@ func (s *Server) handleUDP(read udpReadFunc) {
 	}
 }
 
-func (s *Server) handlePayloadSafe(msg *SyslogMessage, state *ConnState) {
+func (s *Server) handlePayloadSafe(msg *SyslogMessage, state *connState) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("Recovered from handlePayload: %v / `%v`", r, state.Buffer)
@@ -139,13 +163,13 @@ func (s *Server) handlePayloadSafe(msg *SyslogMessage, state *ConnState) {
 	s.handlePayload(msg, state)
 }
 
-func (s *Server) handlePayload(msg *SyslogMessage, state *ConnState) {
+func (s *Server) handlePayload(msg *SyslogMessage, state *connState) {
 	var lines []string
 
 	// New line delimited
-	if s.Mode == MODE_DELIMITER {
+	if s.config.TCPFrameMode == FRAME_MODE_DELIMITER {
 		lines = strings.Split(string(state.Buffer[:state.Size]), "\n")
-	} else if s.Mode == MODE_OCTET_COUNTED {
+	} else if s.config.TCPFrameMode == FRAME_MODE_OCTET_COUNTED {
 		for {
 			if len(state.Buffer) == 0 {
 				break

@@ -13,21 +13,28 @@ import (
 )
 
 type ClusterServerConfig struct {
-	Type     string `json:"type"`
-	Bind     string `json:"bind"`
-	CertFile string `json:"tls_cert_file"`
-	KeyFile  string `json:"tls_key_file"`
+	Type         string `json:"type"`
+	Bind         string `json:"bind"`
+	OctetCounted bool   `json:"octet_counted"`
+	BufferSize   int    `json:"buffer_size"`
+	CertFile     string `json:"tls_cert_file"`
+	KeyFile      string `json:"tls_key_file"`
+}
+
+type ClusterReliabilityConfig struct {
+	InsertRetries int `json:"insert_retries"`
+	RetryDelay    int `json:"retry_delay"`
 }
 
 type ClusterConfig struct {
-	URL            string              `json:"url"`
-	NumWorkers     int                 `json:"num_workers"`
-	BulkSize       int                 `json:"bulk_size"`
-	CommitInterval int                 `json:"commit_interval"`
-	BufferSize     int                 `json:"buffer_size"`
-	Server         ClusterServerConfig `json:"server"`
-	OctetCounted   bool                `json:"octet_counted"`
-	Debug          bool                `json:"debug"`
+	URL            string                   `json:"url"`
+	NumWorkers     int                      `json:"num_workers"`
+	NumReplicas    int                      `json:"num_replicas"`
+	BulkSize       int                      `json:"bulk_size"`
+	CommitInterval int                      `json:"commit_interval"`
+	Reliability    ClusterReliabilityConfig `json:"reliability"`
+	Servers        []ClusterServerConfig    `json:"servers"`
+	Debug          bool                     `json:"debug"`
 }
 
 type Cluster struct {
@@ -36,10 +43,11 @@ type Cluster struct {
 	Config   ClusterConfig
 	Incoming chan *elastic.BulkIndexRequest
 
-	server   *syslog.Server
-	exit     chan bool
-	workers  []*ClusterWorker
-	esClient *elastic.Client
+	reliability int
+	server      *syslog.Server
+	exit        chan bool
+	workers     []*ClusterWorker
+	esClient    *elastic.Client
 }
 
 func NewCluster(state *State, name string, config ClusterConfig) *Cluster {
@@ -54,17 +62,18 @@ func NewCluster(state *State, name string, config ClusterConfig) *Cluster {
 }
 
 func (c *Cluster) Run() error {
+	log.Printf("Cluster %v is starting up", c.Name)
+
 	client, err := elastic.NewClient(elastic.SetURL(c.Config.URL))
 	if err != nil {
 		return err
 	}
 	c.esClient = client
 
-	// Set the global number of relicas to 0
-	// TODO: config this
+	// Set the number of repliacs globally
 	payload := make(map[string]interface{})
 	index := make(map[string]interface{})
-	index["number_of_replicas"] = 0
+	index["number_of_replicas"] = c.Config.NumReplicas
 	payload["index"] = index
 
 	ctx := context.Background()
@@ -73,8 +82,14 @@ func (c *Cluster) Run() error {
 		log.Printf("Failed to set global replica count: %v", err)
 	}
 
+	log.Printf("  successfully setup elasticsearch")
+
+	// Spawn the workers, which process and save incoming messages
 	c.spawnWorkers()
-	go c.runServer()
+	log.Printf("  successfully started %v workers", c.Config.NumWorkers)
+
+	// Spawn servers, which recieve incoming messages and pass them to workers
+	c.spawnServers()
 
 	return nil
 }
@@ -86,57 +101,75 @@ func (c *Cluster) spawnWorkers() {
 	}
 }
 
-func (c *Cluster) runServer() {
-	messages := make(chan syslog.SyslogData, c.Config.BufferSize)
+func (c *Cluster) spawnServers() {
+	for _, serverConfig := range c.Config.Servers {
+		go c.runServer(serverConfig)
+	}
+}
+
+func (c *Cluster) runServer(config ClusterServerConfig) {
+	messages := make(chan syslog.SyslogData, config.BufferSize)
 	errors := make(chan syslog.InvalidMessage)
 
-	if c.Config.OctetCounted {
-		c.server = syslog.NewServer(syslog.MODE_OCTET_COUNTED, messages, errors)
-	} else {
-		c.server = syslog.NewServer(syslog.MODE_DELIMITER, messages, errors)
+	serverConfig := syslog.ServerConfig{
+		TCPFrameMode: syslog.FRAME_MODE_DELIMITER,
+		Format:       syslog.FORMAT_RFC3164,
 	}
 
-	// Debug errors
+	// If we're using TCP and want to octect count, set that here
+	if config.Type != "tcp" {
+		if config.OctetCounted {
+			serverConfig.TCPFrameMode = syslog.FRAME_MODE_OCTET_COUNTED
+		}
+	}
+
+	c.server = syslog.NewServer(&serverConfig, messages, errors)
+
+	// Loop over and consume error payloads, this has inherent backoff within the
+	//  sending side as the channel is async-sent to.
 	go func() {
+		var err syslog.InvalidMessage
+
 		for {
-			err := <-errors
+			err = <-errors
 			log.Printf("Error reading incoming message (%v): %s", err.Error, err.Data)
 		}
 	}()
 
+	// Finally, we're ready to setup and start our syslog server
 	var err error
 
-	if c.Config.Server.Bind == "" {
+	if config.Bind == "" {
 		log.Panicf("Cannot bind to empty address")
 	}
 
-	if c.Config.Server.Type == "tcp" {
+	if config.Type == "tcp" {
 		var server net.Listener
 
-		if c.Config.Server.CertFile != "" {
-			cert, err := tls.LoadX509KeyPair(c.Config.Server.CertFile, c.Config.Server.KeyFile)
+		if config.CertFile != "" {
+			cert, err := tls.LoadX509KeyPair(config.CertFile, config.KeyFile)
 
 			if err != nil {
 				log.Panicf("Failed to load X509 TLS Certificate: %v", err)
 			}
 
-			config := tls.Config{Certificates: []tls.Certificate{cert}}
-			server, err = tls.Listen("tcp", c.Config.Server.Bind, &config)
+			tlsConfig := tls.Config{Certificates: []tls.Certificate{cert}}
+			server, err = tls.Listen("tcp", config.Bind, &tlsConfig)
 		} else {
-			server, err = net.Listen("tcp", c.Config.Server.Bind)
+			server, err = net.Listen("tcp", config.Bind)
 		}
 		c.server.AddTCPListener(server)
-	} else if c.Config.Server.Type == "udp" {
-		addr, err := net.ResolveUDPAddr("udp", c.Config.Server.Bind)
+	} else if config.Type == "udp" {
+		addr, err := net.ResolveUDPAddr("udp", config.Bind)
 
 		if err != nil {
-			log.Panicf("Failed to resolve UDP bind address: %v (%v)", err, c.Config.Server.Bind)
+			log.Panicf("Failed to resolve UDP bind address: %v (%v)", err, config.Bind)
 		}
 
 		server, err := net.ListenUDP("udp", addr)
 		c.server.AddUDPListener(server)
 	} else {
-		log.Panicf("Invalid server type: %v", c.Config.Server.Type)
+		log.Panicf("Invalid server type: %v", config.Type)
 	}
 
 	if err != nil {
@@ -145,7 +178,7 @@ func (c *Cluster) runServer() {
 
 	var payload map[string]interface{}
 
-	log.Printf("Cluster %v is listening for syslog messages...", c.Name)
+	log.Printf("  successfully started server %v:%v", config.Type, config.Bind)
 
 	for {
 		select {
@@ -256,11 +289,20 @@ func (cw *ClusterWorker) commit() {
 		log.Printf("Commiting %v entries", cw.esBulk.NumberOfActions())
 	}
 
-	ctx := context.Background()
-	_, err := cw.esBulk.Do(ctx)
+	attempts := 0
 
-	if err != nil {
-		log.Printf("Failed to write to ES: %v", err)
+	for cw.Cluster.Config.Reliability.InsertRetries == -1 || cw.Cluster.Config.Reliability.InsertRetries > attempts {
+		attempts += 1
+
+		ctx := context.Background()
+		_, err := cw.esBulk.Do(ctx)
+
+		if err != nil {
+			log.Printf("Failed to insert to ES (attempt #%v): %v", attempts, err)
+			time.Sleep(time.Duration(cw.Cluster.Config.Reliability.RetryDelay) * time.Millisecond)
+		} else {
+			break
+		}
 	}
 
 	cw.esBulk = cw.Cluster.esClient.Bulk()

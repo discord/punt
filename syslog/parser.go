@@ -20,6 +20,8 @@ var (
 	}
 )
 
+type ParserInplaceFunc func(msg *SyslogMessage, data string) error
+
 type SyslogMessage struct {
 	Priority  int
 	Timestamp time.Time

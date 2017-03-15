@@ -1,6 +1,6 @@
 # Punt
 
-Punt is a tiny, lightweight, and straightforward daemon that parses, transforms and ships logs to Elasticsearch. Punt was designed and built to be a fast and viable alternative to Logstash, which means it has a focus on fitting into the ELK stack. Punt was built at [Discord](https://github.com/hammerandchisle) to serve as the core component in the middle of our logging pipeline.
+Punt is a tiny, lightweight, and straightforward daemon that parses, transforms and ships logs to Elasticsearch. Punt was designed and built to be a fast and viable alternative to Logstash, which means it has a focus on fitting into the ELK stack. Punt was built at [Discord](https://github.com/hammerandchisel) to serve as the core component in the middle of our logging pipeline.
 
 ## Features
 
@@ -43,7 +43,7 @@ The package includes a simple upstart script.
 
 ### Clusters
 
-Punt supports shipping logs to multiple Elasticsearch clusters, while also supporting multiple input syslog servers. To aid in this design, Punts concept of clusters represent a single syslog server, and a single Elasticsearch cluster. For example, the following is a simple TCP/TLS/Octet-Counted cluster config and corresponding rsyslog config:
+A cluster in Punt represents a single Elasticsearch cluster, multiple syslog servers, and a set of buffers/workers which transform and insert documents into Elasticsearch. Clusters are contained within themselves, and only utilize the types field as a configuration mapping to understand how payloads are parsed, transformed, and saved.
 
 #### Cluster Config Fields
 
@@ -53,31 +53,55 @@ Punt supports shipping logs to multiple Elasticsearch clusters, while also suppo
 | num\_workers | The number of Go-lang workers to use. Increasing this _can_ help reduce latency at high throughput |
 | bulk\_size | The number of records to insert in bulk at a time. Increasing this will increase latency, but reduce work/thrasing on ES |
 | commit\_interval | An interval (in seconds) at which to commit records. This can be used in place of bulk\_size to help reduce latency on low-throughput clusters |
-| octet\_counted | Whether this cluster uses octet counting or newline delimiter for its TCP framing (if using UDP this is ignored) |
+| reliability | Used to tweak the reliability settings of the cluster. This can be used in combination with `buffer_size` to create backoff in the pipeline |
 | debug | If true, this emits some useful (albeit verbose) log lines |
-| server.type | TCP or UDP |
-| server.bind | The server bind address to use |
-| server.cert\_file | A TLS certificate to use for TCP-SSL |
-| server.key\_file | A TLS key to use along with the certificate |
+| servers | A list of Server configuration objects describing all the syslog servers to start |
+
+#### Cluster Reliability Config
+
+| Name | Description |
+|------|-------------|
+| insert\_retries | The number of retries to execute if a bulk insert fails. If -1 this will retry forever, if 0 this will never retry |
+| retry\_delay | Delay (in milliseconds) to wait before retrying a bulk insert request |
+
+#### Cluster Server Config Fields
+
+| Name | Description |
+|------|-------------|
+| type | TCP or UDP |
+| bind | The server bind address to use |
+| cert\_file | A TLS certificate to use for TCP-SSL |
+| key\_file | A TLS key to use along with the certificate |
+| buffer\_size | The size of our input channel, this can be combined with the clusters reliability level to handle ES latency or outages |
+| octet\_counted | Whether this cluster uses octet counting or newline delimiter for its TCP framing (if using UDP this is ignored) |
+
+The following is an example cluster configuration which describes two syslog servers:
 
 #### punt.json
 
 ```json
 {
   "clusters": {
-    "my-tcp-ssl-cluster": {
+    "my-cluster": {
       "url": "http://localhost:9200",
       "num_workers": 4,
       "bulk_size": 500,
       "commit_interval": 60,
-      "buffer_size": 24000,
-      "server": {
-        "type": "tcp",
-        "tls_cert_file": "/tmp/mycert.crt",
-        "tls_key_file": "/tmp/mycert.key",
-        "bind": "localhost:1234"
-      },
-      "octet_counted": true
+      "servers": [
+        {
+          "type": "tcp",
+          "bind": "localhost:1234",
+          "tls_cert_file": "/tmp/mycert.crt",
+          "tls_key_file": "/tmp/mycert.key",
+          "buffer_size": 128,
+          "octet_counted": true
+        },
+        {
+          "type": "udp",
+          "bind": "localhost:4321",
+          "buffer_size": 24000
+        }
+      ]
     }
   }
 }
@@ -86,6 +110,7 @@ Punt supports shipping logs to multiple Elasticsearch clusters, while also suppo
 #### my-rsyslog.conf
 
 ```
+# Forward over TCP using SSL using octect counted framing
 action(
   type="omfwd"
   Target="my-tcp-ssl-cluster.website.corp"
@@ -96,6 +121,14 @@ action(
   StreamDriverAuthMode="x509/name"
   StreamDriverPermittedPeers="*.website.corp"
   TCP_Framing="octet-counted"
+)
+
+# Forward over UDP
+action(
+  type="omfwd"
+  Target="my-udp-cluster.website.corp"
+  Port="4321"
+  Protocol="udp"
 )
 ```
 
