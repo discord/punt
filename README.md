@@ -11,6 +11,12 @@ Punt is a tiny, lightweight, and straightforward daemon that parses, transforms 
 - TLS/SSL
 - Supports JSON logs
 
+## Design / Why Not Logstash?
+
+When Discord originally started logging, we used a standard [ELK stack](https://www.elastic.co/webinars/introduction-elk-stack) setup. Initially this worked well for a low-volume of logs, however as our log volume grew (~750m log lines a day) Logstash quickly began to fall behind. As we spent more and more time tweaking and scaling Logstash/JVM/JRuby, we quickly realised it was not a long-term solution. Punt spawned out of a frustrating weekend dealing with constant Logstash lockups and JVM struggles.
+
+Where Logstash aims for extreme configurability, Punt aims heavily at performance while attempting to remain configurable to some resonable degree. A side effect of this is Punt's expectation that you do most (or all) of the filtering on client machines, usually through something like rsyslog. Examples of Punts performance requirements are visible within the codebase, which contains a custom syslog parser/server implementation aimed at performance.
+
 ## Installation
 
 ### Go
