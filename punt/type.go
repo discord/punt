@@ -13,6 +13,7 @@ type TypeConfig struct {
 type Type struct {
 	Config      TypeConfig
 	Transformer Transformer
+	Alerts      []*Alert
 }
 
 func NewType(config TypeConfig) *Type {

@@ -142,7 +142,7 @@ func (c *Cluster) startServer(config ClusterServerConfig) {
 	//  sending side as the channel is async-sent to.
 	go func() {
 		for err := range errors {
-			log.Printf("Error reading incoming message (%v): %s", err.Error, err.Data)
+			log.Printf("Error reading incoming message (%v): %s (%v)", err.Error, err.Data, len(err.Data))
 		}
 	}()
 
@@ -257,6 +257,10 @@ func (cw *ClusterWorker) run() {
 
 			if cw.Cluster.Config.Debug {
 				log.Printf("(%v) %v", indexString, payload)
+			}
+
+			for _, alert := range typ.Alerts {
+				alert.Run(payload)
 			}
 
 			// Grab a read lock

@@ -103,7 +103,7 @@ func (s *Server) handleTCP(conn net.Listener) {
 			Size:   0,
 		}
 
-		buf := make([]byte, 64000)
+		buf := make([]byte, 4096)
 
 		for {
 			sz, err = client.Read(buf)
@@ -112,7 +112,7 @@ func (s *Server) handleTCP(conn net.Listener) {
 				break
 			}
 
-			state.Size += sz
+			// state.Size += sz
 			state.Buffer = append(state.Buffer, buf[:sz]...)
 
 			s.handlePayloadSafe(&msg, &state)
@@ -163,6 +163,15 @@ func (s *Server) handlePayloadSafe(msg *SyslogMessage, state *connState) {
 	s.handlePayload(msg, state)
 }
 
+func (s *Server) sendInvalidMessage(msg InvalidMessage) {
+	select {
+	case s.Errors <- msg:
+		break
+	default:
+		break
+	}
+}
+
 func (s *Server) handlePayload(msg *SyslogMessage, state *connState) {
 	var lines []string
 
@@ -180,14 +189,16 @@ func (s *Server) handlePayload(msg *SyslogMessage, state *connState) {
 				// Find an octet count
 				match := OctetRe.Find(state.Buffer)
 				if match == nil {
-					s.Errors <- InvalidMessage{Data: string(state.Buffer), Error: InvalidOctetErr}
+					s.sendInvalidMessage(InvalidMessage{Data: string(state.Buffer), Error: InvalidOctetErr})
+					state.Buffer = []byte{}
 					return
 				}
 
 				// Convert to an integer
 				size, err := strconv.Atoi(string(match))
 				if err != nil {
-					s.Errors <- InvalidMessage{Data: string(state.Buffer), Error: err}
+					state.Buffer = []byte{}
+					s.sendInvalidMessage(InvalidMessage{Data: string(state.Buffer), Error: err})
 					return
 				}
 
@@ -200,6 +211,8 @@ func (s *Server) handlePayload(msg *SyslogMessage, state *connState) {
 
 				if len(state.Buffer)-state.OctLen > 0 {
 					state.Buffer = state.Buffer[offset+state.OctLen:]
+				} else {
+					state.Buffer = []byte{}
 				}
 
 				state.OctLen = 0
@@ -224,12 +237,7 @@ func (s *Server) parse(msg *SyslogMessage, data string, addr string) {
 	// If we an encounter an error, attempt a non-blocking insert into the errors
 	//  channel.
 	if err != nil {
-		select {
-		case s.Errors <- InvalidMessage{Data: data, Error: err}:
-			return
-		default:
-			return
-		}
+		s.sendInvalidMessage(InvalidMessage{Data: data, Error: err})
 	}
 
 	parts := msg.ToMapping()

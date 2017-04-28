@@ -35,5 +35,31 @@
       }
     }
   },
-  "mappings": []
+  "mappings": [],
+  "alerts": {
+    "magic-word-found": {
+      "type": "match",
+      "sources": [],
+      "config": {
+        "source": "content",
+        "match": "^ magic.*",
+        "title": "FOUND MAGIC",
+        "description": "{{.content}}",
+        "fields": {
+          "hostname": "{{.hostname}}",
+          "timestamp": "{{.timestamp}}"
+        }
+      },
+      "action": "discord-alert"
+    }
+  },
+  "actions": {
+    "discord-alert": {
+      "type": "discord",
+      "config": {
+        "url": "???",
+        "color": 16738657
+      }
+    }
+  }
 }

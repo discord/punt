@@ -7,6 +7,8 @@ type State struct {
 
 	Clusters map[string]*Cluster
 	Types    map[string]*Type
+	Alerts   map[string]*Alert
+	Actions  map[string]*Action
 	Exit     chan bool
 }
 
@@ -15,6 +17,8 @@ func NewState(config *Config) *State {
 		Config:   config,
 		Clusters: make(map[string]*Cluster),
 		Types:    make(map[string]*Type),
+		Alerts:   make(map[string]*Alert),
+		Actions:  make(map[string]*Action),
 		Exit:     make(chan bool),
 	}
 
@@ -24,6 +28,25 @@ func NewState(config *Config) *State {
 
 	for name, typeConfig := range config.Types {
 		state.Types[name] = NewType(typeConfig)
+	}
+
+	for name, actionConfig := range config.Actions {
+		state.Actions[name] = NewAction(&state, name, actionConfig)
+	}
+
+	for name, alertConfig := range config.Alerts {
+		state.Alerts[name] = NewAlert(&state, name, alertConfig)
+
+		// If no sources are provided, we assume all sources are wanted
+		if len(state.Alerts[name].Sources) == 0 {
+			for _, typ := range state.Types {
+				typ.Alerts = append(typ.Alerts, state.Alerts[name])
+			}
+		} else {
+			for _, source := range state.Alerts[name].Sources {
+				state.Types[source].Alerts = append(state.Types[source].Alerts, state.Alerts[name])
+			}
+		}
 	}
 
 	return &state
