@@ -3,6 +3,8 @@ package punt
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"log"
 	"net/http"
 	"time"
 )
@@ -17,18 +19,24 @@ type ActionConfig struct {
 	Config map[string]interface{} `json:"config"`
 }
 
-func (a *Action) Run(info *AlertInfo) {
-	a.impl.Run(info)
+func (a *Action) Run(infos []*AlertInfo) {
+	a.impl.Run(infos)
 }
 
 func NewAction(state *State, name string, config ActionConfig) *Action {
-	return &Action{
+	action := Action{
 		impl: GetActionImplementation(config.Type, config.Config),
 	}
+
+	if action.impl == nil {
+		log.Fatalf("Invalid Action: `%s`", config.Type)
+	}
+
+	return &action
 }
 
 type ActionImpl interface {
-	Run(info *AlertInfo)
+	Run([]*AlertInfo)
 }
 
 func GetActionImplementation(name string, config map[string]interface{}) ActionImpl {
@@ -90,19 +98,24 @@ func (dwa *DiscordWebhookAction) send(payload MessagePayload) (err error) {
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
+	log.Printf("wat: %v", err)
 	defer resp.Body.Close()
 	return err
 }
 
-func (dwa *DiscordWebhookAction) Run(info *AlertInfo) {
+func (dwa *DiscordWebhookAction) Run(infos []*AlertInfo) {
 	embed := Embed{
-		Title:       info.Title,
-		Description: info.Description,
+		Title:       infos[0].Title,
+		Description: infos[0].Description,
 		Color:       dwa.Color,
-		Timestamp:   info.Log["timestamp"].(time.Time).Format(time.RFC3339),
+		Timestamp:   infos[0].Log["timestamp"].(time.Time).Format(time.RFC3339),
 	}
 
-	for name, value := range info.Fields {
+	if len(infos) > 1 {
+		embed.Title = embed.Title + fmt.Sprintf(" (%v similar events)", len(infos)-1)
+	}
+
+	for name, value := range infos[0].Fields {
 		embed.AddField(name, value, false)
 	}
 

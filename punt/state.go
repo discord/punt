@@ -38,12 +38,12 @@ func NewState(config *Config) *State {
 		state.Alerts[name] = NewAlert(&state, name, alertConfig)
 
 		// If no sources are provided, we assume all sources are wanted
-		if len(state.Alerts[name].Sources) == 0 {
+		if len(state.Alerts[name].Config.Sources) == 0 {
 			for _, typ := range state.Types {
 				typ.Alerts = append(typ.Alerts, state.Alerts[name])
 			}
 		} else {
-			for _, source := range state.Alerts[name].Sources {
+			for _, source := range state.Alerts[name].Config.Sources {
 				state.Types[source].Alerts = append(state.Types[source].Alerts, state.Alerts[name])
 			}
 		}
