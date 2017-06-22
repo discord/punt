@@ -3,12 +3,15 @@ package punt
 import (
 	"context"
 	"crypto/tls"
-	"gopkg.in/olivere/elastic.v5"
+	"fmt"
 	"log"
 	"net"
 	"os"
 	"sync"
 	"time"
+
+	"github.com/DataDog/datadog-go/statsd"
+	"gopkg.in/olivere/elastic.v5"
 
 	"../syslog"
 )
@@ -44,6 +47,7 @@ type Cluster struct {
 	Config   ClusterConfig
 	Incoming chan *elastic.BulkIndexRequest
 
+	metrics     *statsd.Client
 	messages    chan syslog.SyslogData
 	hostname    string
 	reliability int
@@ -63,6 +67,7 @@ func NewCluster(state *State, name string, config ClusterConfig) *Cluster {
 		State:    state,
 		Config:   config,
 		Incoming: make(chan *elastic.BulkIndexRequest),
+		metrics:  NewStatsdClient("punt", []string{fmt.Sprintf("cluster-name:%s", name)}),
 		messages: make(chan syslog.SyslogData, 0),
 		hostname: name,
 		exit:     make(chan bool),
@@ -143,6 +148,7 @@ func (c *Cluster) startServer(config ClusterServerConfig) {
 	go func() {
 		for err := range errors {
 			log.Printf("Error reading incoming message (%v): %s (%v)", err.Error, err.Data, len(err.Data))
+			c.metrics.Incr("msgs.error", []string{}, 1)
 		}
 	}()
 
@@ -228,16 +234,21 @@ func (cw *ClusterWorker) run() {
 	for {
 		select {
 		case msg := <-cw.Cluster.messages:
+			tag := msg["tag"].(string)
+
+			cw.Cluster.metrics.Incr("msgs.received", []string{fmt.Sprintf("tag:%s", tag)}, 1)
+
 			// Attempt to select the type based on the syslog tag
 			var typ *Type
 
-			typ = cw.Cluster.State.Types[msg["tag"].(string)]
+			typ = cw.Cluster.State.Types[tag]
 
 			if typ == nil {
 				typ = cw.Cluster.State.Types["*"]
 
 				if typ == nil {
-					log.Printf("Warning, recieved unhandled tag %v", msg["tag"].(string))
+					log.Printf("Warning, recieved unhandled tag %v", tag)
+					cw.Cluster.metrics.Incr("msgs.unhandled", []string{fmt.Sprintf("tag:%s", tag)}, 1)
 					continue
 				}
 			}
@@ -249,6 +260,8 @@ func (cw *ClusterWorker) run() {
 			payload, err = typ.Transformer.Transform(msg)
 			if err != nil {
 				log.Printf("Failed to transform message `%v`: %v", msg, err)
+				cw.Cluster.metrics.Incr("msgs.failed", []string{fmt.Sprintf("tag:%s", tag)}, 1)
+				continue
 			}
 
 			indexString := typ.Config.Prefix + timestamp.Format(typ.Config.DateFormat)
@@ -274,6 +287,8 @@ func (cw *ClusterWorker) run() {
 				go cw.commit()
 			}
 			cw.lock.RUnlock()
+
+			cw.Cluster.metrics.Incr("msgs.processed", []string{fmt.Sprintf("tag:%s", tag)}, 1)
 		case <-cw.exit:
 			return
 		}
@@ -302,10 +317,12 @@ func (cw *ClusterWorker) commit() {
 		return
 	}
 
+	actions := int64(cw.esBulk.NumberOfActions())
 	if cw.Cluster.Config.Debug {
-		log.Printf("Commiting %v entries", cw.esBulk.NumberOfActions())
+		log.Printf("Commiting %v entries", actions)
 	}
 
+	success := false
 	attempts := 0
 
 	for cw.Cluster.Config.Reliability.InsertRetries == -1 || cw.Cluster.Config.Reliability.InsertRetries > attempts {
@@ -318,8 +335,14 @@ func (cw *ClusterWorker) commit() {
 			log.Printf("Failed to insert to ES (attempt #%v): %v", attempts, err)
 			time.Sleep(time.Duration(cw.Cluster.Config.Reliability.RetryDelay) * time.Millisecond)
 		} else {
+			cw.Cluster.metrics.Count("msgs.inserted", actions, []string{}, 1)
+			success = true
 			break
 		}
+	}
+
+	if !success {
+		cw.Cluster.metrics.Count("msgs.dropped", actions, []string{}, 1)
 	}
 
 	cw.esBulk = cw.Cluster.esClient.Bulk()
