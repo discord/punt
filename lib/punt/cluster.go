@@ -11,9 +11,8 @@ import (
 	"time"
 
 	"github.com/DataDog/datadog-go/statsd"
+	"github.com/hammerandchisel/punt/lib/syslog"
 	"gopkg.in/olivere/elastic.v5"
-
-	"../syslog"
 )
 
 type ClusterServerConfig struct {

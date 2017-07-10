@@ -1,8 +1,9 @@
 package punt
 
 import (
-	"../syslog"
 	"encoding/json"
+
+	"github.com/hammerandchisel/punt/lib/syslog"
 )
 
 type Transformer interface {
