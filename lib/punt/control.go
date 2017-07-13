@@ -64,13 +64,24 @@ func (cs *ControlSocket) handleConnection(conn net.Conn) {
 }
 
 func (cs *ControlSocket) handleCommandTail(args string, reader *bufio.Reader, writer *bufio.Writer) {
-	parts := strings.Split(string(args), " ")
+	parts := strings.SplitN(string(args), " ", 2)
 	typeName := parts[0]
 
 	if _, exists := cs.state.Types[typeName]; !exists {
-		writer.WriteString(fmt.Sprintf("Unknown type '%s'\r\n", typeName))
+		writer.WriteString(fmt.Sprintf("Unknown type '%s'\n", typeName))
 		writer.Flush()
 		return
+	}
+
+	var filter map[string]string
+	if len(parts) > 1 && len(parts[1]) > 0 {
+		err := json.Unmarshal([]byte(parts[1]), &filter)
+		if err != nil {
+			log.Printf("[CS] error parsing json filter: %s", err)
+			writer.WriteString(fmt.Sprintf("Invalid Filter: %s\n", err))
+			writer.Flush()
+			return
+		}
 	}
 
 	log.Printf("[CS] Tail starting on %s", typeName)
@@ -86,6 +97,7 @@ func (cs *ControlSocket) handleCommandTail(args string, reader *bufio.Reader, wr
 		}
 	}()
 
+	var matched bool
 	var err error
 	var bytes []byte
 	var msg map[string]interface{}
@@ -98,8 +110,22 @@ func (cs *ControlSocket) handleCommandTail(args string, reader *bufio.Reader, wr
 			continue
 		}
 
+		if len(filter) > 0 {
+			matched = true
+			for k, v := range filter {
+				if data, exists := msg[k]; !exists || data.(string) != v {
+					matched = false
+					break
+				}
+			}
+
+			if !matched {
+				continue
+			}
+		}
+
 		writer.Write(bytes)
-		writer.WriteString("\r\n")
+		writer.WriteString("\n")
 		err = writer.Flush()
 		if err != nil {
 			return
