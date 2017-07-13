@@ -65,4 +65,13 @@ func (s *State) Run() {
 			}
 		}
 	}
+
+	if s.Config.ControlSocket.Enabled {
+		cs, err := NewControlSocket(s, s.Config.ControlSocket.Bind)
+		if err != nil {
+			log.Printf("Failed to create control socket: %v", err)
+		} else {
+			go cs.Run()
+		}
+	}
 }

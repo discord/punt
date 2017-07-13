@@ -280,6 +280,10 @@ func (cw *ClusterWorker) run() {
 				log.Printf("(%v) %v", indexString, payload)
 			}
 
+			for _, sub := range typ.subscribers {
+				sub.channel <- payload
+			}
+
 			for _, alert := range typ.Alerts {
 				alert.Run(payload)
 			}

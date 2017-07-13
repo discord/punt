@@ -10,10 +10,21 @@ type TypeConfig struct {
 	} `json:"transformer"`
 }
 
+type TypeSubscriber struct {
+	channel chan (map[string]interface{})
+}
+
+func NewTypeSubscriber() *TypeSubscriber {
+	return &TypeSubscriber{
+		channel: make(chan map[string]interface{}, 0),
+	}
+}
+
 type Type struct {
 	Config      TypeConfig
 	Transformer Transformer
 	Alerts      []*Alert
+	subscribers []*TypeSubscriber
 }
 
 func NewType(config TypeConfig) *Type {

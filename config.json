@@ -33,6 +33,14 @@
       "transformer": {
         "name": "direct"
       }
+    },
+    "logs": {
+      "prefix": "logs-",
+      "mapping_type": "test",
+      "date_format": "2006.01.02.15",
+      "transformer": {
+        "name": "direct"
+      }
     }
   },
   "mappings": [],
@@ -62,5 +70,9 @@
         "color": 16738657
       }
     }
+  },
+  "control_socket": {
+    "enabled": true,
+    "bind": "localhost:1234"
   }
 }

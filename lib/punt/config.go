@@ -5,12 +5,18 @@ import (
 	"io/ioutil"
 )
 
+type ControlSocketConfig struct {
+	Bind    string `json:"bind"`
+	Enabled bool   `json:"enabled"`
+}
+
 type Config struct {
-	Clusters map[string]ClusterConfig `json:"clusters"`
-	Types    map[string]TypeConfig    `json:"types"`
-	Mappings []Mapping                `json:"mappings"`
-	Alerts   map[string]AlertConfig   `json:"alerts"`
-	Actions  map[string]ActionConfig  `json:"actions"`
+	Clusters      map[string]ClusterConfig `json:"clusters"`
+	Types         map[string]TypeConfig    `json:"types"`
+	Mappings      []Mapping                `json:"mappings"`
+	Alerts        map[string]AlertConfig   `json:"alerts"`
+	Actions       map[string]ActionConfig  `json:"actions"`
+	ControlSocket ControlSocketConfig      `json:"control_socket"`
 }
 
 func LoadConfig(path string) (*Config, error) {
