@@ -38,6 +38,7 @@ func (cs *ControlSocket) Run() {
 			continue
 		}
 
+		log.Printf("[CS] New connection opened")
 		go cs.handleConnection(conn)
 	}
 }
@@ -64,7 +65,6 @@ func (cs *ControlSocket) handleConnection(conn net.Conn) {
 
 func (cs *ControlSocket) handleCommandTail(args string, reader *bufio.Reader, writer *bufio.Writer) {
 	parts := strings.Split(string(args), " ")
-
 	typeName := parts[0]
 
 	if _, exists := cs.state.Types[typeName]; !exists {
@@ -72,6 +72,8 @@ func (cs *ControlSocket) handleCommandTail(args string, reader *bufio.Reader, wr
 		writer.Flush()
 		return
 	}
+
+	log.Printf("[CS] Tail starting on %s", typeName)
 
 	sub := NewTypeSubscriber()
 	typ := cs.state.Types[typeName]

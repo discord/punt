@@ -280,8 +280,12 @@ func (cw *ClusterWorker) run() {
 				log.Printf("(%v) %v", indexString, payload)
 			}
 
+			// Distribute the message to all subscribers, using non-blocking send
 			for _, sub := range typ.subscribers {
-				sub.channel <- payload
+				select {
+				case sub.channel <- payload:
+				default:
+				}
 			}
 
 			for _, alert := range typ.Alerts {
