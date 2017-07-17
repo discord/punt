@@ -1,26 +1,26 @@
 package syslog
 
 import (
-	"fmt"
+	"github.com/stretchr/testify/assert"
 	"testing"
 )
 
-func assertEqual(t *testing.T, a interface{}, b interface{}) {
-	if a == b {
-		return
-	}
-
-	t.Fatal(fmt.Sprintf("%v != %v", a, b))
-}
-
 func TestSimple(t *testing.T) {
-	msg, err := ParseRFC3164([]byte(
-		"<190>Feb 22 04:23:32 discord-api-prd-1-11 discord-api: this is a test oh boy!",
-	))
+	msg, err := ParseRFC3164(
+		"<190>Feb 22 04:23:32 test-hostname-with-stuff-1-32 my-application: this is a test oh boy!",
+	)
 
-	assertEqual(t, err, nil)
-	assertEqual(t, msg.Priority, 190)
-	assertEqual(t, msg.Hostname, "discord-api-prd-1-11")
-	assertEqual(t, msg.Tag, "discord-api")
-	assertEqual(t, msg.Content, "this is a test oh boy!")
+	assert.Equal(t, err, nil)
+	assert.Equal(t, 190, msg.Priority)
+	assert.Equal(t, "test-hostname-with-stuff-1-32", msg.Hostname)
+	assert.Equal(t, "my-application", msg.Tag)
+	assert.Equal(t, "this is a test oh boy!", msg.Content)
+
+	msg, err = ParseRFC3164(
+		"<34>Oct 11 22:14:15 mymachine su: 'su root' failed for lonvick\non /dev/pts/8",
+	)
+
+	assert.Equal(t, nil, err)
+	assert.Equal(t, 34, msg.Priority)
+	assert.Equal(t, "'su root' failed for lonvick\non /dev/pts/8", msg.Content)
 }

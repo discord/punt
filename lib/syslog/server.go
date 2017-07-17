@@ -5,8 +5,6 @@ import (
 	"log"
 	"net"
 	"regexp"
-	"strconv"
-	"strings"
 )
 
 const (
@@ -51,9 +49,7 @@ type Server struct {
 
 type connState struct {
 	Addr   string
-	Buffer []byte
-	Size   int
-	OctLen int
+	Buffer *SyslogBuffer
 }
 
 type udpReadFunc func([]byte) (int, net.Addr, error)
@@ -99,8 +95,7 @@ func (s *Server) handleTCP(conn net.Listener) {
 
 		state := connState{
 			Addr:   client.RemoteAddr().String(),
-			Buffer: make([]byte, 0),
-			Size:   0,
+			Buffer: NewSyslogBuffer(),
 		}
 
 		buf := make([]byte, 4096)
@@ -112,9 +107,7 @@ func (s *Server) handleTCP(conn net.Listener) {
 				break
 			}
 
-			// state.Size += sz
-			state.Buffer = append(state.Buffer, buf[:sz]...)
-
+			state.Buffer.Append(buf[:sz])
 			s.handlePayloadSafe(&msg, &state)
 		}
 	}
@@ -136,14 +129,16 @@ func (s *Server) handleUDP(read udpReadFunc) {
 	var msg SyslogMessage
 
 	state := connState{
-		Buffer: make([]byte, 32000),
+		Buffer: NewSyslogBuffer(),
 	}
 
-	for {
-		sz, addr, err = read(state.Buffer)
+	buf := make([]byte, 4096)
 
-		state.Size = sz
+	for {
+		sz, addr, err = read(buf)
+
 		state.Addr = addr.String()
+		state.Buffer.Append(buf[:sz])
 
 		if err != nil || sz <= 0 {
 			break
@@ -174,52 +169,26 @@ func (s *Server) sendInvalidMessage(msg InvalidMessage) {
 
 func (s *Server) handlePayload(msg *SyslogMessage, state *connState) {
 	var lines []string
+	var line []byte
 
 	// New line delimited
 	if s.config.TCPFrameMode == FRAME_MODE_DELIMITER {
-		lines = strings.Split(string(state.Buffer[:state.Size]), "\n")
+		for {
+			line = state.Buffer.NextLine()
+			if line == nil {
+				break
+			}
+
+			lines = append(lines, string(line))
+		}
 	} else if s.config.TCPFrameMode == FRAME_MODE_OCTET_COUNTED {
 		for {
-			if len(state.Buffer) == 0 {
+			line = state.Buffer.Next()
+			if line == nil {
 				break
 			}
 
-			// If this isn't a continuation on a previous payload, read the octet length
-			if state.OctLen == 0 {
-				// Find an octet count
-				match := OctetRe.Find(state.Buffer)
-				if match == nil {
-					s.sendInvalidMessage(InvalidMessage{Data: string(state.Buffer), Error: InvalidOctetErr})
-					state.Buffer = []byte{}
-					return
-				}
-
-				// Convert to an integer
-				size, err := strconv.Atoi(string(match))
-				if err != nil {
-					state.Buffer = []byte{}
-					s.sendInvalidMessage(InvalidMessage{Data: string(state.Buffer), Error: err})
-					return
-				}
-
-				state.OctLen = size
-			}
-
-			if len(state.Buffer) >= state.OctLen {
-				offset := len(strconv.FormatInt(int64(state.OctLen), 10)) + 1
-				lines = append(lines, string(state.Buffer[offset:offset+state.OctLen]))
-
-				if len(state.Buffer)-state.OctLen > 0 {
-					state.Buffer = state.Buffer[offset+state.OctLen:]
-				} else {
-					state.Buffer = []byte{}
-				}
-
-				state.OctLen = 0
-			} else {
-				// Waiting for more
-				break
-			}
+			lines = append(lines, string(line))
 		}
 	}
 

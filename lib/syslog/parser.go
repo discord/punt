@@ -8,7 +8,7 @@ import (
 )
 
 var (
-	RFC3164 = regexp.MustCompile(`<([0-9]+)>([A-Z][a-z][a-z]\s{1,2}\d{1,2}\s\d{2}[:]\d{2}[:]\d{2})\s([\w][\w\d\.@-]*)\s([^: []+)(?:\[([0-9]+)\])?[: [](.*)`)
+	RFC3164 = regexp.MustCompile(`<([0-9]+)>([A-Z][a-z][a-z]\s{1,2}\d{1,2}\s\d{2}[:]\d{2}[:]\d{2})\s([\w][\w\d\.@-]*)\s([^: []+)(?:\[([0-9]+)\])?[: [] ?((.|\n)*)`)
 
 	InvalidMessageError   = errors.New("Invalid Message")
 	InvalidPriortyError   = errors.New("Invalid Priority")
