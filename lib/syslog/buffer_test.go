@@ -5,6 +5,22 @@ import (
 	"testing"
 )
 
+func TestIncompleteBufferRead(t *testing.T) {
+	data := []byte("5")
+
+	buffer := NewSyslogBuffer()
+	buffer.Append(data)
+
+	assert.Equal(t, 0, buffer.scanSize())
+	assert.Equal(t, []byte(nil), buffer.Next())
+	assert.Equal(t, "5", string(buffer.Buffer))
+
+	buffer.Append([]byte(" test "))
+
+	assert.Equal(t, "5 test ", string(buffer.Buffer))
+	assert.Equal(t, "test ", string(buffer.Next()))
+}
+
 func TestBufferScanSize(t *testing.T) {
 	data := []byte("5 test 4 wtf 3 lol 2   ")
 

@@ -1,6 +1,7 @@
 package syslog
 
 import (
+	"log"
 	"strconv"
 	"unicode"
 )
@@ -25,49 +26,59 @@ func (sb *SyslogBuffer) Append(data []byte) {
 }
 
 func (sb *SyslogBuffer) scanSize() int {
+	var read int
 	var buffer []byte
-	var char byte
+	var complete bool = false
 
-	for sb.Size > 0 {
-		char = sb.Buffer[0]
+	for _, char := range sb.Buffer {
+		read += 1
 
 		if unicode.IsDigit(int32(char)) {
-			sb.Buffer = sb.Buffer[1:]
-			sb.Size -= 1
 			buffer = append(buffer, char)
 			continue
 		}
 
 		if len(buffer) > 0 && char == ' ' {
-			sb.Buffer = sb.Buffer[1:]
-			sb.Size -= 1
+			complete = true
 			break
 		}
-
-		sb.Buffer = sb.Buffer[1:]
-		sb.Size -= 1
 	}
+
+	if !complete {
+		return 0
+	}
+
+	// TODO: if bad data gets in our buffer, we will never flush it
 
 	value, err := strconv.Atoi(string(buffer))
 	if err != nil {
 		return 0
 	}
+
+	sb.Buffer = sb.Buffer[read:]
+	sb.Size -= read
 	return value
 }
 
 func (sb *SyslogBuffer) Next() []byte {
+	log.Printf("NEXT")
+
 	if sb.LastSize == 0 {
 		sb.LastSize = sb.scanSize()
+		log.Printf("  scan required %s", sb.LastSize)
 		if sb.LastSize == 0 {
 			return nil
 		}
 	}
 
 	if sb.Size < sb.LastSize {
+		log.Printf("  not enough data %s, need %s", sb.Size, sb.LastSize)
 		return nil
 	} else {
 		data := sb.Buffer[:sb.LastSize]
+		log.Printf("  read `%s`", string(data))
 		sb.Buffer = sb.Buffer[sb.LastSize:]
+		log.Printf("  buffer is now `%s`", string(sb.Buffer))
 		sb.Size -= sb.LastSize
 		sb.LastSize = 0
 		return data
