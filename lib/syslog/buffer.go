@@ -1,7 +1,6 @@
 package syslog
 
 import (
-	"log"
 	"strconv"
 	"unicode"
 )
@@ -61,24 +60,18 @@ func (sb *SyslogBuffer) scanSize() int {
 }
 
 func (sb *SyslogBuffer) Next() []byte {
-	log.Printf("NEXT")
-
 	if sb.LastSize == 0 {
 		sb.LastSize = sb.scanSize()
-		log.Printf("  scan required %s", sb.LastSize)
 		if sb.LastSize == 0 {
 			return nil
 		}
 	}
 
 	if sb.Size < sb.LastSize {
-		log.Printf("  not enough data %s, need %s", sb.Size, sb.LastSize)
 		return nil
 	} else {
 		data := sb.Buffer[:sb.LastSize]
-		log.Printf("  read `%s`", string(data))
 		sb.Buffer = sb.Buffer[sb.LastSize:]
-		log.Printf("  buffer is now `%s`", string(sb.Buffer))
 		sb.Size -= sb.LastSize
 		sb.LastSize = 0
 		return data
