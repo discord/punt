@@ -19,7 +19,6 @@ type ClusterServerConfig struct {
 	Type         string `json:"type"`
 	Bind         string `json:"bind"`
 	OctetCounted bool   `json:"octet_counted"`
-	BufferSize   int    `json:"buffer_size"`
 	CertFile     string `json:"tls_cert_file"`
 	KeyFile      string `json:"tls_key_file"`
 }
@@ -39,6 +38,7 @@ type ClusterConfig struct {
 	Reliability    ClusterReliabilityConfig `json:"reliability"`
 	Servers        []ClusterServerConfig    `json:"servers"`
 	Debug          bool                     `json:"debug"`
+	BufferSize     int                      `json:"buffer_size"`
 }
 
 type Cluster struct {
@@ -68,7 +68,7 @@ func NewCluster(state *State, name string, config ClusterConfig) *Cluster {
 		Config:   config,
 		Incoming: make(chan *elastic.BulkIndexRequest),
 		metrics:  NewStatsdClient("punt", []string{fmt.Sprintf("cluster-name:%s", name)}),
-		messages: make(chan syslog.SyslogData, 0),
+		messages: make(chan syslog.SyslogData, config.BufferSize),
 		hostname: name,
 		exit:     make(chan bool),
 		workers:  make([]*ClusterWorker, 0),
@@ -134,7 +134,6 @@ func (c *Cluster) spawnServers() {
 func (c *Cluster) startServer(config ClusterServerConfig) {
 	var syslogServer *syslog.Server
 
-	messages := make(chan syslog.SyslogData, config.BufferSize)
 	errors := make(chan syslog.InvalidMessage)
 
 	serverConfig := syslog.ServerConfig{
@@ -149,7 +148,7 @@ func (c *Cluster) startServer(config ClusterServerConfig) {
 		}
 	}
 
-	syslogServer = syslog.NewServer(&serverConfig, messages, errors)
+	syslogServer = syslog.NewServer(&serverConfig, c.messages, errors)
 
 	// Loop over and consume error payloads, this has inherent backoff within the
 	//  sending side as the channel is async-sent to.
@@ -157,14 +156,6 @@ func (c *Cluster) startServer(config ClusterServerConfig) {
 		for err := range errors {
 			log.Printf("Error reading incoming message (%v): %s (%v)", err.Error, err.Data, len(err.Data))
 			c.metrics.Incr("msgs.error", []string{}, 1)
-		}
-	}()
-
-	// Loop over and consume syslog payloads, redirecting them to our global worker
-	//  queue.
-	go func() {
-		for msg := range messages {
-			c.messages <- msg
 		}
 	}()
 
@@ -242,14 +233,12 @@ func (cw *ClusterWorker) run() {
 	for {
 		select {
 		case msg := <-cw.Cluster.messages:
+			// Increment the received metric
 			tag := msg["tag"].(string)
-
 			cw.Cluster.metrics.Incr("msgs.received", []string{fmt.Sprintf("tag:%s", tag)}, 1)
 
 			// Attempt to select the type based on the syslog tag
-			var typ *Type
-
-			typ = cw.Cluster.State.Types[tag]
+			typ := cw.Cluster.State.Types[tag]
 
 			if typ == nil {
 				typ = cw.Cluster.State.Types["*"]
