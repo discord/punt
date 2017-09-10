@@ -13,7 +13,8 @@ type ControlSocketConfig struct {
 type Config struct {
 	Clusters      map[string]ClusterConfig `json:"clusters"`
 	Types         map[string]TypeConfig    `json:"types"`
-	Mappings      []Mapping                `json:"mappings"`
+	Templates     map[string]Template      `json:"templates"`
+	Mappings      map[string]Mapping       `json:"mappings"`
 	Alerts        map[string]AlertConfig   `json:"alerts"`
 	Actions       map[string]ActionConfig  `json:"actions"`
 	ControlSocket ControlSocketConfig      `json:"control_socket"`

@@ -43,7 +43,21 @@
       }
     }
   },
-  "mappings": [],
+  "mappings": {
+    "test": {
+      "fields": {
+        "test": {
+          "type": "text",
+          "index": true
+        }
+      }
+    }
+  },
+  "templates": {
+    "test-*": {
+      "mappings": ["test"]
+    }
+  },
   "alerts": {
     "magic-word-found": {
       "type": "match",

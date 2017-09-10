@@ -55,13 +55,19 @@ func NewState(config *Config) *State {
 func (s *State) Run() {
 	log.Printf("Attempting to start Punt")
 
+	for mappingName, mapping := range s.Config.Mappings {
+		mapping.Name = mappingName
+	}
+
 	for _, cluster := range s.Clusters {
 		cluster.Run()
 
-		for _, mapping := range s.Config.Mappings {
-			err := mapping.PutMapping(cluster.esClient)
+		var err error
+		for name, template := range s.Config.Templates {
+			template.Name = name
+			err = template.PutTemplate(cluster.esClient, s.Config)
 			if err != nil {
-				log.Printf("Failed to create mapping: %v", err)
+				log.Printf("Failed to create index template: %v", err)
 			}
 		}
 	}
