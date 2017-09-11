@@ -261,6 +261,11 @@ func (cw *ClusterWorker) run() {
 				continue
 			}
 
+			// Apply all the mutators
+			for _, mutator := range typ.Mutators {
+				mutator.Mutate(payload)
+			}
+
 			indexString := typ.Config.Prefix + timestamp.Format(typ.Config.DateFormat)
 			payload["@timestamp"] = timestamp.Format("2006-01-02T15:04:05+00:00")
 			payload["punt-server"] = cw.Cluster.hostname

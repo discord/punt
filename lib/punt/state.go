@@ -67,7 +67,9 @@ func (s *State) Run() {
 			template.Name = name
 			err = template.PutTemplate(cluster.esClient, s.Config)
 			if err != nil {
-				log.Printf("Failed to create index template: %v", err)
+				log.Printf("Failed to create index template `%v`: %v", name, err)
+			} else {
+				log.Printf("Synced index template `%v`", name)
 			}
 		}
 	}
@@ -80,4 +82,6 @@ func (s *State) Run() {
 			go cs.Run()
 		}
 	}
+
+	log.Printf("Punt started")
 }
