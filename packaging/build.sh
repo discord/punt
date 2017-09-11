@@ -12,7 +12,8 @@ pushd build
 mkdir -p usr/bin
 
 # Build punt
-go build ../../cmd/puntd.go
+go build -o puntd ../../cmd/puntd/main.go
+go build -o punt-cli ../../cmd/punt-cli/main.go
 
 # Copy files in place
 mv puntd usr/bin/
