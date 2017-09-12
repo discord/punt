@@ -2,6 +2,8 @@ language: go
 go:
   - 1.8.x
 
+script: go test -t -v ./...
+
 install:
   - go get github.com/hammerandchisel/punt/cmd/puntd
   - go get github.com/hammerandchisel/punt/cmd/punt-cli
