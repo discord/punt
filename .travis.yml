@@ -4,7 +4,7 @@ go:
 
 script:
   - go get github.com/stretchr/testify/assert
-  - go test -t -v lib/syslog
+  - go test -v github.com/hammerandchisel/punt/lib/syslog
 
 install:
   - go get github.com/hammerandchisel/punt/cmd/puntd
