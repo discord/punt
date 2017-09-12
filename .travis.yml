@@ -1,0 +1,26 @@
+language: go
+go:
+  - 1.8.x
+
+install:
+  - go get github.com/hammerandchisel/punt/cmd/puntd
+  - go get github.com/hammerandchisel/punt/cmd/punt-cli
+  - mkdir release/
+  - GOOS=linux GOARCH=amd64 go build -o release/puntd-linux-amd64 github.com/hammerandchisel/punt/cmd/puntd
+  - GOOS=linux GOARCH=amd64 go build -o release/punt-cli-linux-amd64 github.com/hammerandchisel/punt/cmd/punt-cli
+  - GOOS=darwin GOARCH=amd64 go build -o release/puntd-darwin-amd64 github.com/hammerandchisel/punt/cmd/puntd
+  - GOOS=darwin GOARCH=amd64 go build -o release/punt-cli-darwin-amd64 github.com/hammerandchisel/punt/cmd/punt-cli
+
+deploy:
+  skip_cleanup: true
+  provider: releases
+  api_key:
+    secure: ODHmbFsbZIZJPipT3EHyb1IRR3Y5la9ZHmIwP2aWgcrAKjZX6IC3y3TivGxnJ0sf8SLEDGnAdiPqzR/UbNxfxUeEpksdVKMkyz8XPmz66np6zjngO9/WAqWa49XM+vapjXurbd2Fd76kRSS6stq4DyMqn/2E6xWOcMyl0QQVz5JAuiq6Plaf3/RTEIE4QQmQFMEvHexDRSCT4USimq1g5rNJn53LS9UGB8PAbiPo4ay2kSByD6SnMRPDuxtyIbgGpIRSU1Uuoxxp/Ue2pD+sTLd7xeplc8UYUAgWr41fcNMvT5mpW4LbSB5QUtx96tk9mZN4EAe95oMRE+v4Tbn34Ezip/MngsLLv49qKp8/FXuZab0m8B5nxmiCCdXGCYXEI1u106VvRvosfTcZaqE/fds3554HikLVdbFA9oSGQ2mnlBrBcQEaVbNtwY381Jf01XoCyOZ0f5+6YmdAP2T0YlTM/FgMoDCKEJIrzuy2KKsQwBRqW/3Y52IAMmB+R9+fMq5rtInl1NoHiMXmijIgG7x/F1oZaPxcfeLcxg2Y326uE1vwzH36cs+Pngy47W0YHD9NFo9Bmi4Ttw7nd0ioq1uu9lkLsELgBmSJPk+T5luUY/y4tD6IqpEfr6G4JPpTrabgEoSW7+1Z7HuuCTFkz1fcp1L/EkdYGMYb2aahTQk=
+  file:
+    - release/puntd-linux-amd64
+    - release/punt-cli-linux-amd64
+    - release/puntd-darwin-amd64
+    - release/punt-cli-darwin-amd64
+  on:
+    repo: hammerandchisel/punt
+    tags: true
