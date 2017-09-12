@@ -1,21 +1,21 @@
 # Punt
 
-Punt is a tiny, lightweight, and straightforward daemon that parses, transforms and ships logs to Elasticsearch. Punt was designed and built to be a fast and viable alternative to Logstash, which means it has a focus on fitting into the ELK stack. Punt was built at [Discord](https://github.com/hammerandchisel) to serve as the core component in the middle of our logging pipeline.
+Punt is a lightweight and simple daemon that parses, transforms, mutates, and ships logs into Elasticsearch. Punt was built as a fast and reliable alternative to Logstash, which means it's focus is to fit directly into existing ELK setups. Punt was built at [Discord](https://github.com/hammerandchisle) to manage the over 2.5 billion log lines we process per day.
 
 ## Features
 
-- Simple Dynamic Configuration File
-- Performance Driven Design
-- UDP/TCP (both delimiter and octet based framing)
-- Multiple cross-protocol servers at the same time
-- TLS/SSL
-- Supports JSON logs
+- Designed to be fast and reliable
+- Simple JSON-based configuration file
+- Supports rsyslog over UDP/TCP, including multiple framing formats and SSL
+- Multiple ingest servers and egress ES clusters
+- Ability to parse and transform structured (JSON) logs
 
-## Design / Why Not Logstash?
+
+## Why Not Logstash?
 
 When Discord originally started logging, we used a standard [ELK stack](https://www.elastic.co/webinars/introduction-elk-stack) setup. Initially this worked well for a low-volume of logs, however as our log volume grew (~750m log lines a day) Logstash quickly began to fall behind. As we spent more and more time tweaking and scaling Logstash/JVM/JRuby, we quickly realised it was not a long-term solution. Punt spawned out of a frustrating weekend dealing with constant Logstash lockups and JVM struggles.
 
-Where Logstash aims for extreme configurability, Punt aims heavily at performance while attempting to remain configurable to some resonable degree. A side effect of this is Punt's expectation that you do most (or all) of the filtering on client machines, usually through something like rsyslog. Examples of Punts performance requirements are visible within the codebase, which contains a custom syslog parser/server implementation aimed at performance.
+Where Logstash aims to be immensely configurable and pluggable via its DSL, Punt aims to be an extremely performant solution, without compromising or reducing the core features required to handle and store structured log data.
 
 ## Installation
 
