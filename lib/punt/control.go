@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
 	"strings"
 )
@@ -13,6 +14,12 @@ type ControlSocket struct {
 	bind     string
 	listener net.Listener
 	state    *State
+}
+
+type TailRequest struct {
+	StreamType string
+	Filter     map[string]string
+	Sample     int
 }
 
 func NewControlSocket(state *State, bind string) (*ControlSocket, error) {
@@ -51,6 +58,7 @@ func (cs *ControlSocket) handleConnection(conn net.Conn) {
 		line, _, err := reader.ReadLine()
 
 		if err != nil {
+			log.Printf("[CS] Closed")
 			break
 		}
 
@@ -58,36 +66,28 @@ func (cs *ControlSocket) handleConnection(conn net.Conn) {
 
 		switch parts[0] {
 		case "tail":
-			cs.handleCommandTail(parts[1], reader, writer)
+			tailData := TailRequest{}
+			err := json.Unmarshal([]byte(parts[1]), &tailData)
+			if err != nil {
+				log.Printf("[CS] Received malformed tail request payload")
+				continue
+			}
+			cs.handleCommandTail(&tailData, reader, writer)
 		}
 	}
 }
 
-func (cs *ControlSocket) handleCommandTail(args string, reader *bufio.Reader, writer *bufio.Writer) {
-	parts := strings.SplitN(string(args), " ", 2)
-	typeName := parts[0]
-
-	if _, exists := cs.state.Types[typeName]; !exists {
-		writer.WriteString(fmt.Sprintf("Unknown type '%s'\n", typeName))
+func (cs *ControlSocket) handleCommandTail(data *TailRequest, reader *bufio.Reader, writer *bufio.Writer) {
+	if _, exists := cs.state.Types[data.StreamType]; !exists {
+		writer.WriteString(fmt.Sprintf("Unknown type '%s'\n", data.StreamType))
 		writer.Flush()
 		return
 	}
 
-	var filter map[string]string
-	if len(parts) > 1 && len(parts[1]) > 0 {
-		err := json.Unmarshal([]byte(parts[1]), &filter)
-		if err != nil {
-			log.Printf("[CS] error parsing json filter: %s", err)
-			writer.WriteString(fmt.Sprintf("Invalid Filter: %s\n", err))
-			writer.Flush()
-			return
-		}
-	}
-
-	log.Printf("[CS] Tail starting on %s", typeName)
+	log.Printf("[CS] Tail starting on %s", data.StreamType)
 
 	sub := NewTypeSubscriber()
-	typ := cs.state.Types[typeName]
+	typ := cs.state.Types[data.StreamType]
 	typ.subscribers = append(typ.subscribers, sub)
 	defer func() {
 		for _, value := range typ.subscribers {
@@ -110,9 +110,10 @@ func (cs *ControlSocket) handleCommandTail(args string, reader *bufio.Reader, wr
 			continue
 		}
 
-		if len(filter) > 0 {
+		// Filter the messages based on our information
+		if len(data.Filter) > 0 {
 			matched = true
-			for k, v := range filter {
+			for k, v := range data.Filter {
 				if data, exists := msg[k]; !exists || data.(string) != v {
 					matched = false
 					break
@@ -124,10 +125,18 @@ func (cs *ControlSocket) handleCommandTail(args string, reader *bufio.Reader, wr
 			}
 		}
 
+		// If we're sampling the data, do that now
+		if data.Sample != 100 {
+			if rand.Intn(100) > data.Sample {
+				continue
+			}
+		}
+
 		writer.Write(bytes)
 		writer.WriteString("\n")
 		err = writer.Flush()
 		if err != nil {
+			log.Printf("[CS] Tail closed on %s", data.StreamType)
 			return
 		}
 	}

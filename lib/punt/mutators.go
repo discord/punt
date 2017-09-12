@@ -63,8 +63,8 @@ func (m *GeoIPMutator) Mutate(data map[string]interface{}) error {
 			data[output] = city.Country.IsoCode
 		case "location_geo":
 			data[output] = []float64{
-				city.Location.Latitude,
 				city.Location.Longitude,
+				city.Location.Latitude,
 			}
 		default:
 		}
