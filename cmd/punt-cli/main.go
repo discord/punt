@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/hammerandchisel/punt/lib/punt"
+	"github.com/discordapp/punt/lib/punt"
 )
 
 var (

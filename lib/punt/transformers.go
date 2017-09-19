@@ -3,7 +3,7 @@ package punt
 import (
 	"encoding/json"
 
-	"github.com/hammerandchisel/punt/lib/syslog"
+	"github.com/discordapp/punt/lib/syslog"
 )
 
 type Transformer interface {

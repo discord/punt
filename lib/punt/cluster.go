@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/DataDog/datadog-go/statsd"
-	"github.com/hammerandchisel/punt/lib/syslog"
+	"github.com/discordapp/punt/lib/syslog"
 	"gopkg.in/olivere/elastic.v5"
 )
 
