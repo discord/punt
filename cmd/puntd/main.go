@@ -2,7 +2,7 @@ package main
 
 import (
 	"flag"
-	"github.com/hammerandchisel/punt/lib/punt"
+	"github.com/discordapp/punt/lib/punt"
 	"log"
 )
 

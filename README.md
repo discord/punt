@@ -24,7 +24,7 @@ Where Logstash aims to be immensely configurable and pluggable via its DSL, Punt
 To install Punt using the Go toolchain, simply
 
 ```sh
-go get github.com/hammerandchisel/punt/cmd/puntd
+go get github.com/discordapp/punt/cmd/puntd
 ```
 
 ### Package (Debian/Ubuntu)

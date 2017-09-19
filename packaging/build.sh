@@ -26,7 +26,7 @@ fpm \
   -v $VERSION \
   -n punt \
   -m "Andrei Zbikowski <az@discordapp.com>" \
-  --url "https://github.com/hammerandchisel/punt" \
+  --url "https://github.com/discordapp/punt" \
   --deb-upstart upstart/punt.conf \
   build/=/
 

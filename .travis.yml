@@ -4,16 +4,16 @@ go:
 
 script:
   - go get github.com/stretchr/testify/assert
-  - go test -v github.com/hammerandchisel/punt/lib/syslog
+  - go test -v github.com/discordapp/punt/lib/syslog
 
 install:
-  - go get github.com/hammerandchisel/punt/cmd/puntd
-  - go get github.com/hammerandchisel/punt/cmd/punt-cli
+  - go get github.com/discordapp/punt/cmd/puntd
+  - go get github.com/discordapp/punt/cmd/punt-cli
   - mkdir release/
-  - GOOS=linux GOARCH=amd64 go build -o release/puntd-linux-amd64 github.com/hammerandchisel/punt/cmd/puntd
-  - GOOS=linux GOARCH=amd64 go build -o release/punt-cli-linux-amd64 github.com/hammerandchisel/punt/cmd/punt-cli
-  - GOOS=darwin GOARCH=amd64 go build -o release/puntd-darwin-amd64 github.com/hammerandchisel/punt/cmd/puntd
-  - GOOS=darwin GOARCH=amd64 go build -o release/punt-cli-darwin-amd64 github.com/hammerandchisel/punt/cmd/punt-cli
+  - GOOS=linux GOARCH=amd64 go build -o release/puntd-linux-amd64 github.com/discordapp/punt/cmd/puntd
+  - GOOS=linux GOARCH=amd64 go build -o release/punt-cli-linux-amd64 github.com/discordapp/punt/cmd/punt-cli
+  - GOOS=darwin GOARCH=amd64 go build -o release/puntd-darwin-amd64 github.com/discordapp/punt/cmd/puntd
+  - GOOS=darwin GOARCH=amd64 go build -o release/punt-cli-darwin-amd64 github.com/discordapp/punt/cmd/punt-cli
 
 deploy:
   skip_cleanup: true
@@ -26,5 +26,5 @@ deploy:
     - release/puntd-darwin-amd64
     - release/punt-cli-darwin-amd64
   on:
-    repo: hammerandchisel/punt
+    repo: discordapp/punt
     tags: true
