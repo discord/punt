@@ -106,6 +106,12 @@ func (c *Cluster) Run() error {
 
 	log.Printf("  successfully setup elasticsearch")
 
+	// Spawn the index GC goroutine
+	if len(c.State.Config.GC) > 0 {
+		go c.gcIndexes()
+		log.Printf("  successfully started Index GC routine")
+	}
+
 	// Spawn the workers, which process and save incoming messages
 	c.spawnWorkers()
 	log.Printf("  successfully started %v workers", c.Config.NumWorkers)
@@ -115,6 +121,17 @@ func (c *Cluster) Run() error {
 	log.Printf("  completed startup")
 
 	return nil
+}
+
+func (c *Cluster) gcIndexes() {
+	ticker := time.NewTicker(time.Second * 5)
+	for {
+		<-ticker.C
+
+		for prefix, gcConfig := range c.State.Config.GC {
+			GCIndexes(c.esClient, prefix, gcConfig)
+		}
+	}
 }
 
 func (c *Cluster) spawnWorkers() {
