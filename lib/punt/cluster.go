@@ -124,10 +124,9 @@ func (c *Cluster) Run() error {
 }
 
 func (c *Cluster) gcIndexes() {
-	ticker := time.NewTicker(time.Second * 5)
-	for {
-		<-ticker.C
+	ticker := time.NewTicker(time.Minute * 15)
 
+	for range ticker.C {
 		for prefix, gcConfig := range c.State.Config.GC {
 			GCIndexes(c.esClient, prefix, gcConfig)
 		}
