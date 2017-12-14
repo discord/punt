@@ -98,7 +98,6 @@ func (dwa *DiscordWebhookAction) send(payload MessagePayload) (err error) {
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
-	log.Printf("wat: %v", err)
 	defer resp.Body.Close()
 	return err
 }
