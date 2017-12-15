@@ -18,6 +18,7 @@ type Config struct {
 	Alerts        map[string]AlertConfig   `json:"alerts"`
 	Actions       map[string]ActionConfig  `json:"actions"`
 	ControlSocket ControlSocketConfig      `json:"control_socket"`
+	GC            map[string]GCConfig      `json:"gc"`
 }
 
 func LoadConfig(path string) (*Config, error) {
