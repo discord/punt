@@ -25,13 +25,16 @@ func GCIndexes(esClient *elastic.Client, prefix string, config GCConfig) {
 		return
 	}
 
+	// Sort the array, this will end up being older -> newer
 	sortedIndexNames := make([]string, 0)
 	for key, _ := range indexes {
 		sortedIndexNames = append(sortedIndexNames, key)
 	}
 	sort.Strings(sortedIndexNames)
 
-	toDelete := sortedIndexNames[:config.Keep]
+	// Now that we've sorted indexes, we want to select all but the latest config.Keep
+	//  indexes and delete those.
+	toDelete := sortedIndexNames[:len(sortedIndexNames)-config.Keep]
 
 	log.Printf("[GC] Deleting the following indexes for `%v`: %v", prefix, toDelete)
 	_, err = elastic.NewIndicesDeleteService(esClient).Index(toDelete).Do(ctx)
