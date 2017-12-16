@@ -17,9 +17,10 @@ type TypeConfig struct {
 	} `json:"transformer"`
 	Mutators []map[string]interface{} `json:"mutators"`
 	Template *struct {
-		NumReplicas *int     `json:"num_replicas"`
-		NumShards   *int     `json:"num_shards"`
-		Mappings    []string `json:"mappings"`
+		NumReplicas     *int     `json:"num_replicas"`
+		NumShards       *int     `json:"num_shards"`
+		RefreshInterval *string  `json:"refresh_interval"`
+		Mappings        []string `json:"mappings"`
 	} `json:"template"`
 }
 
@@ -73,6 +74,10 @@ func (t *Type) SyncIndexTemplate(esClient *elastic.Client, config *Config) error
 
 	if templateConfig.NumShards != nil {
 		settings["number_of_shards"] = templateConfig.NumShards
+	}
+
+	if templateConfig.RefreshInterval != nil {
+		settings["refresh_interval"] = templateConfig.RefreshInterval
 	}
 
 	payload := make(map[string]interface{})
