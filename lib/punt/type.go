@@ -1,6 +1,11 @@
 package punt
 
-import "log"
+import (
+	"context"
+	"log"
+
+	"gopkg.in/olivere/elastic.v5"
+)
 
 type TypeConfig struct {
 	Prefix      string `json:"prefix"`
@@ -11,6 +16,11 @@ type TypeConfig struct {
 		Config map[string]interface{} `json:"config"`
 	} `json:"transformer"`
 	Mutators []map[string]interface{} `json:"mutators"`
+	Template *struct {
+		NumReplicas *int     `json:"num_replicas"`
+		NumShards   *int     `json:"num_shards"`
+		Mappings    []string `json:"mappings"`
+	} `json:"template"`
 }
 
 type TypeSubscriber struct {
@@ -47,4 +57,36 @@ func NewType(config TypeConfig) *Type {
 		Transformer: GetTransformer(config.Transformer.Name, config.Transformer.Config),
 		Mutators:    mutators,
 	}
+}
+
+func (t *Type) SyncIndexTemplate(esClient *elastic.Client, config *Config) error {
+	if t.Config.Template == nil {
+		return nil
+	}
+
+	templateConfig := t.Config.Template
+
+	settings := make(map[string]interface{})
+	if templateConfig.NumReplicas != nil {
+		settings["number_of_replicas"] = templateConfig.NumReplicas
+	}
+
+	if templateConfig.NumShards != nil {
+		settings["number_of_shards"] = templateConfig.NumShards
+	}
+
+	payload := make(map[string]interface{})
+	payload["template"] = t.Config.Prefix + "*"
+	payload["settings"] = settings
+
+	mappings := make(map[string]interface{})
+	for _, mappingName := range templateConfig.Mappings {
+		mappings[mappingName] = config.Mappings[mappingName].GenerateJSON()
+	}
+	payload["mappings"] = mappings
+
+	templateService := elastic.NewIndicesPutTemplateService(esClient)
+	ctx := context.Background()
+	_, err := templateService.BodyJson(payload).Name(t.Config.Prefix + "template").Do(ctx)
+	return err
 }

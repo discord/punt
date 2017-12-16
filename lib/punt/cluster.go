@@ -31,8 +31,6 @@ type ClusterReliabilityConfig struct {
 type ClusterConfig struct {
 	URL            string                   `json:"url"`
 	NumWorkers     int                      `json:"num_workers"`
-	NumReplicas    *int                     `json:"num_replicas"`
-	NumShards      *int                     `json:"num_shards"`
 	BulkSize       int                      `json:"bulk_size"`
 	CommitInterval int                      `json:"commit_interval"`
 	Reliability    ClusterReliabilityConfig `json:"reliability"`
@@ -83,28 +81,16 @@ func (c *Cluster) Run() error {
 		return err
 	}
 	c.esClient = client
-
-	// Set the number of repliacs globally
-	payload := make(map[string]interface{})
-	index := make(map[string]interface{})
-
-	if c.Config.NumReplicas != nil {
-		index["number_of_replicas"] = *c.Config.NumReplicas
-	}
-
-	if c.Config.NumShards != nil {
-		index["number_of_shards"] = *c.Config.NumShards
-	}
-
-	payload["index"] = index
-
-	ctx := context.Background()
-	_, err = c.esClient.IndexPutSettings("_all").BodyJson(payload).Do(ctx)
-	if err != nil {
-		log.Printf("Failed to set global replica count: %v", err)
-	}
-
 	log.Printf("  successfully setup elasticsearch")
+
+	// Sync all the type settings we have
+	for typeName, typ := range c.State.Types {
+		err = typ.SyncIndexTemplate(client, c.State.Config)
+		if err != nil {
+			log.Printf("  ERROR: failed to sync index template for type %v", typeName)
+		}
+	}
+	log.Printf("  successfully synced type index templates")
 
 	// Spawn the index GC goroutine
 	if len(c.State.Config.GC) > 0 {
