@@ -2,7 +2,8 @@ package punt
 
 import (
 	"context"
-	"gopkg.in/olivere/elastic.v5"
+
+	"github.com/olivere/elastic"
 )
 
 type Template struct {
