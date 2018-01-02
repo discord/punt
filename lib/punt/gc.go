@@ -5,7 +5,7 @@ import (
 	"log"
 	"sort"
 
-	"gopkg.in/olivere/elastic.v5"
+	"github.com/olivere/elastic"
 )
 
 type GCConfig struct {

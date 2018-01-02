@@ -43,7 +43,9 @@ func NewUnpackMergeTransformer(config map[string]interface{}) *UnpackMergeTransf
 
 func (u *UnpackMergeTransformer) Transform(parts syslog.SyslogData) (map[string]interface{}, error) {
 	err := json.Unmarshal([]byte(parts["content"].(string)), &parts)
-	delete(parts, "content")
+	if err == nil {
+		delete(parts, "content")
+	}
 	return parts, err
 }
 

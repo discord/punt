@@ -12,7 +12,7 @@ import (
 
 	"github.com/DataDog/datadog-go/statsd"
 	"github.com/discordapp/punt/lib/syslog"
-	"gopkg.in/olivere/elastic.v5"
+	"github.com/olivere/elastic"
 )
 
 type ClusterServerConfig struct {
