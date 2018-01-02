@@ -61,17 +61,6 @@ func (s *State) Run() {
 
 	for _, cluster := range s.Clusters {
 		cluster.Run()
-
-		var err error
-		for name, template := range s.Config.Templates {
-			template.Name = name
-			err = template.PutTemplate(cluster.esClient, s.Config)
-			if err != nil {
-				log.Printf("Failed to create index template `%v`: %v", name, err)
-			} else {
-				log.Printf("Synced index template `%v`", name)
-			}
-		}
 	}
 
 	if s.Config.ControlSocket.Enabled {
