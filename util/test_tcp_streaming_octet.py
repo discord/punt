@@ -8,6 +8,9 @@ s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.connect(('localhost', 5678))
 
 for msg in messages:
-    s.send(msg)
-
-s.close()
+    try:
+        s.send(msg)
+    except socket.error, exc:
+        print("Caught exception socket.error: %s" % exc)
+    finally:
+        s.close()
