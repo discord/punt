@@ -1,6 +1,6 @@
 # Punt
 
-Punt is a lightweight and simple daemon that parses, transforms, mutates, and ships logs into Elasticsearch. Punt was built as a fast and reliable alternative to Logstash, which means it's focus is to fit directly into existing ELK setups. Punt was built at [Discord](https://github.com/discordapp) to manage the over 2.5 billion log lines we process per day.
+Punt is a lightweight and simple daemon that parses, transforms, mutates, and ships logs into Elasticsearch. Punt was built as a fast and reliable alternative to Logstash, which means it's focus is to fit directly into existing ELK setups. Punt was built at [Discord](https://github.com/discordapp) to manage the over 4 billion log lines we process per day.
 
 ## Features
 
@@ -8,8 +8,13 @@ Punt is a lightweight and simple daemon that parses, transforms, mutates, and sh
 - Simple JSON-based configuration file
 - Supports rsyslog over UDP/TCP, including multiple framing formats and SSL
 - Multiple ingest servers and egress ES clusters
+- Management and configuration of ES index templates and type mappings
 - Ability to parse and transform structured (JSON) logs
-
+- Threshold/Matching based alerting
+- Streaming API for real time log tailing
+- Support for attaching maxmind GeoIP2 geolocation data
+- Automatic deletion of old indexes based on retention rules
+- Exporting of metrics in the Datadog statsd format
 
 ## Why Not Logstash?
 
