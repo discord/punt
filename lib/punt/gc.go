@@ -36,9 +36,20 @@ func GCIndexes(esClient *elastic.Client, prefix string, config GCConfig) {
 	//  indexes and delete those.
 	toDelete := sortedIndexNames[:len(sortedIndexNames)-config.Keep]
 
-	log.Printf("[GC] Deleting the following indexes for `%v`: %v", prefix, toDelete)
-	_, err = elastic.NewIndicesDeleteService(esClient).Index(toDelete).Do(ctx)
-	if err != nil {
-		log.Printf("[GC] ERROR: failed to delete indexes (%v): %v", toDelete, err)
+	var toDeleteBuff []string
+	for len(toDelete) > 0 {
+		if len(toDelete) > 25 {
+			toDeleteBuff = toDelete[:25]
+			toDelete = toDelete[25:]
+		} else {
+			toDeleteBuff = toDelete
+			toDelete = make([]string, 0)
+		}
+
+		log.Printf("[GC] Deleting the following indexes for `%v`: %v", prefix, toDeleteBuff)
+		_, err = elastic.NewIndicesDeleteService(esClient).Index(toDeleteBuff).Do(ctx)
+		if err != nil {
+			log.Printf("[GC] ERROR: failed to delete indexes (%v): %v", toDeleteBuff, err)
+		}
 	}
 }
