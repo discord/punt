@@ -330,6 +330,8 @@ func (cw *ClusterWorker) commitLoop(interval int) {
 }
 
 func (cw *ClusterWorker) commit() {
+	startCommitTime := time.Now()
+
 	cw.lock.Lock()
 	defer cw.lock.Unlock()
 
@@ -349,6 +351,7 @@ func (cw *ClusterWorker) commit() {
 		attempts += 1
 
 		ctx := context.Background()
+		startWriteTime := time.Now()
 		_, err := cw.esBulk.Do(ctx)
 
 		if err != nil {
@@ -356,6 +359,7 @@ func (cw *ClusterWorker) commit() {
 			time.Sleep(time.Duration(cw.Cluster.Config.Reliability.RetryDelay) * time.Millisecond)
 		} else {
 			cw.Cluster.metrics.Count("msgs.inserted", actions, []string{}, 1)
+			cw.Cluster.metrics.Timing("write_latency", time.Now().Sub(startWriteTime), []string{}, 1)
 			success = true
 			break
 		}
@@ -366,4 +370,5 @@ func (cw *ClusterWorker) commit() {
 	}
 
 	cw.esBulk = cw.Cluster.esClient.Bulk()
+	cw.Cluster.metrics.Timing("commit_latency", time.Now().Sub(startCommitTime), []string{}, 1)
 }
