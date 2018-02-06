@@ -237,6 +237,7 @@ func (cw *ClusterWorker) run() {
 		go cw.commitLoop(cw.Cluster.Config.CommitInterval)
 	}
 
+	var startProcessing time.Time
 	var err error
 	var payload map[string]interface{}
 
@@ -245,7 +246,8 @@ func (cw *ClusterWorker) run() {
 		case msg := <-cw.Cluster.messages:
 			// Increment the received metric
 			tag := msg["tag"].(string)
-			cw.Cluster.metrics.Incr("msgs.received", []string{fmt.Sprintf("tag:%s", tag)}, 1)
+			statsTags := []string{fmt.Sprintf("tag:%s", tag)}
+			cw.Cluster.metrics.Incr("msgs.received", statsTags, 1)
 
 			// Attempt to select the type based on the syslog tag
 			typ := cw.Cluster.State.Types[tag]
@@ -255,7 +257,7 @@ func (cw *ClusterWorker) run() {
 
 				if typ == nil {
 					log.Printf("Warning, recieved unhandled tag %v", tag)
-					cw.Cluster.metrics.Incr("msgs.unhandled", []string{fmt.Sprintf("tag:%s", tag)}, 1)
+					cw.Cluster.metrics.Incr("msgs.unhandled", statsTags, 1)
 					continue
 				}
 			}
@@ -263,11 +265,14 @@ func (cw *ClusterWorker) run() {
 			// Grab this in case our transformer modifies it
 			timestamp := msg["timestamp"].(time.Time)
 
+			// Start a time as we process and mutate the message
+			startProcessing = time.Now()
+
 			// Transform the message using the type properties
 			payload, err = typ.Transformer.Transform(msg)
 			if err != nil {
 				log.Printf("Failed to transform message `%v`: %v", msg, err)
-				cw.Cluster.metrics.Incr("msgs.failed", []string{fmt.Sprintf("tag:%s", tag)}, 1)
+				cw.Cluster.metrics.Incr("msgs.failed", statsTags, 1)
 				continue
 			}
 
@@ -279,6 +284,9 @@ func (cw *ClusterWorker) run() {
 			indexString := typ.Config.Prefix + timestamp.Format(typ.Config.DateFormat)
 			payload["@timestamp"] = timestamp.Format("2006-01-02T15:04:05+00:00")
 			payload["punt-server"] = cw.Cluster.hostname
+
+			// Report the processing time
+			cw.Cluster.metrics.Timing("processing_latency", time.Now().Sub(startProcessing), statsTags, 1)
 
 			if cw.Cluster.Config.Debug {
 				log.Printf("(%v) %v", indexString, payload)
@@ -308,7 +316,7 @@ func (cw *ClusterWorker) run() {
 			}
 			cw.lock.RUnlock()
 
-			cw.Cluster.metrics.Incr("msgs.processed", []string{fmt.Sprintf("tag:%s", tag)}, 1)
+			cw.Cluster.metrics.Incr("msgs.processed", statsTags, 1)
 		case <-cw.exit:
 			return
 		}
