@@ -5,11 +5,12 @@ import "log"
 type State struct {
 	Config *Config
 
-	Clusters map[string]*Cluster
-	Types    map[string]*Type
-	Alerts   map[string]*Alert
-	Actions  map[string]*Action
-	Exit     chan bool
+	Clickhouse *Clickhouse
+	Clusters   map[string]*Cluster
+	Types      map[string]*Type
+	Alerts     map[string]*Alert
+	Actions    map[string]*Action
+	Exit       chan bool
 }
 
 func NewState(config *Config) *State {
@@ -22,8 +23,15 @@ func NewState(config *Config) *State {
 		Exit:     make(chan bool),
 	}
 
+	if config.Clickhouse != nil {
+		state.Clickhouse = NewClickhouse(config.Clickhouse)
+	}
+
 	for name, cluster := range config.Clusters {
 		state.Clusters[name] = NewCluster(&state, name, cluster)
+		if state.Clickhouse != nil {
+			state.Clusters[name].AddOutput(state.Clickhouse)
+		}
 	}
 
 	for name, typeConfig := range config.Types {

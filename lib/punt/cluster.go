@@ -15,6 +15,10 @@ import (
 	"github.com/olivere/elastic"
 )
 
+type ClusterOutputWriter interface {
+	Write(string, time.Time, map[string]interface{}) error
+}
+
 type ClusterServerConfig struct {
 	Type         string `json:"type"`
 	Bind         string `json:"bind"`
@@ -44,6 +48,7 @@ type Cluster struct {
 	State    *State
 	Config   ClusterConfig
 	Incoming chan *elastic.BulkIndexRequest
+	Outputs  []ClusterOutputWriter
 
 	metrics     *statsd.Client
 	messages    chan syslog.SyslogData
@@ -65,12 +70,17 @@ func NewCluster(state *State, name string, config ClusterConfig) *Cluster {
 		State:    state,
 		Config:   config,
 		Incoming: make(chan *elastic.BulkIndexRequest),
+		Outputs:  make([]ClusterOutputWriter, 0),
 		metrics:  NewStatsdClient("punt", []string{fmt.Sprintf("cluster-name:%s", name)}),
 		messages: make(chan syslog.SyslogData, config.BufferSize),
 		hostname: name,
 		exit:     make(chan bool),
 		workers:  make([]*ClusterWorker, 0),
 	}
+}
+
+func (c *Cluster) AddOutput(output ClusterOutputWriter) {
+	c.Outputs = append(c.Outputs, output)
 }
 
 func (c *Cluster) Run() error {
@@ -302,6 +312,13 @@ func (cw *ClusterWorker) run() {
 
 			for _, alert := range typ.Alerts {
 				alert.Run(payload)
+			}
+
+			for _, outputter := range cw.Cluster.Outputs {
+				err = outputter.Write(tag, timestamp, payload)
+				if err != nil && cw.Cluster.Config.Debug {
+					log.Printf("WARNING outputter failed: %v", err)
+				}
 			}
 
 			// Grab a read lock

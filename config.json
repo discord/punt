@@ -25,6 +25,24 @@
       "debug": true
     }
   },
+  "clickhouse": {
+    "url": "tcp://127.0.0.1:9000",
+    "bulk_size": 5,
+    "buffer_size": 100,
+    "types": {
+      "audit": {
+        "table": "test",
+        "fields": [
+          "content",
+          "hostname",
+          "pid",
+          "priority",
+          "source",
+          "tag"
+        ]
+      }
+    }
+  },
   "types": {
     "*": {
       "prefix": "test-",
