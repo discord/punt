@@ -8,5 +8,7 @@
   - how to we handle one row that failed out of a batch?
   - etc?
 - Refactor elasticsearch into a datastore
+- Add GC support to datastores?
+  - Per-data store or abstracted?
 - Cleanup?
 
