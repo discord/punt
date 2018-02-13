@@ -2,6 +2,7 @@ package punt
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -9,6 +10,8 @@ import (
 	"github.com/kshvakov/clickhouse"
 	"github.com/mitchellh/mapstructure"
 )
+
+var NoConnectionError = errors.New("No clickhouse connection available")
 
 type ClickhouseConfig struct {
 	URL       string
@@ -66,14 +69,13 @@ func (c *ClickhouseDatastore) Commit(payloads []*DatastorePayload) error {
 		if c.db == nil {
 			// TODO(az): retry / backoff logic? Should go in batch?
 			log.Printf("[CH] WARNING: failed to commit, no active database connection")
-			return nil
+			return NoConnectionError
 		}
 	}
 
 	// Map of table to transaction
 	tx, err := c.db.Begin()
 	if err != nil {
-		// TODO(az)
 		return err
 	}
 
@@ -83,15 +85,12 @@ func (c *ClickhouseDatastore) Commit(payloads []*DatastorePayload) error {
 
 	for _, payload := range payloads {
 		if _, exists := c.typeInsertQueries[payload.TypeName]; !exists {
-			log.Printf("SKIPPING: %v", payload.TypeName)
 			continue
 		}
 
 		if _, exists = queries[payload.TypeName]; !exists {
-			log.Printf("PREPARE: %v", c.typeInsertQueries[payload.TypeName])
 			q, err := tx.Prepare(c.typeInsertQueries[payload.TypeName])
 			if err != nil {
-				// TODO(az): see above
 				return err
 			}
 			queries[payload.TypeName] = q
@@ -100,13 +99,11 @@ func (c *ClickhouseDatastore) Commit(payloads []*DatastorePayload) error {
 		query = queries[payload.TypeName]
 		row, err := c.prepare(payload)
 		if err != nil {
-			// TODO(az): see above
 			return err
 		}
 
 		_, err = query.Exec(row...)
 		if err != nil {
-			// TODO(az): see above
 			return err
 		}
 	}
