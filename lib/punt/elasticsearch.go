@@ -10,12 +10,10 @@ import (
 )
 
 type ElasticsearchConfig struct {
-	URL        string
-	Types      map[string]ElasticsearchTypeConfig
-	Mappings   map[string]ElasticsearchMappingConfig
-	BatchSize  int
-	MaxRetries int
-	Backoff    int
+	URL      string
+	Types    map[string]ElasticsearchTypeConfig
+	Mappings map[string]ElasticsearchMappingConfig
+	DatastoreBatcherConfig
 }
 
 type ElasticsearchTypeConfig struct {
@@ -54,7 +52,7 @@ func NewElasticsearchDatastore(config map[string]interface{}) *ElasticsearchData
 
 	mapstructure.Decode(config, es.config)
 
-	es.batcher = NewDatastoreBatcher(es, es.config.BatchSize, es.config.MaxRetries, es.config.Backoff)
+	es.batcher = NewDatastoreBatcher(es, &es.config.DatastoreBatcherConfig)
 	return es
 }
 

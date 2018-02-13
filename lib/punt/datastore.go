@@ -49,42 +49,52 @@ type DatastoreBatcherDestination interface {
 	Commit([]*DatastorePayload) error
 }
 
-// A batcher utilty for datastores
-type DatastoreBatcher struct {
-	dest         DatastoreBatcherDestination
-	batchSize    int
-	maxRetries   int
-	backoff      int
-	bufferLength int
-	buffer       []*DatastorePayload
+type DatastoreBatcherConfig struct {
+	BatchSize            int
+	MaxRetries           int
+	Backoff              int
+	MaxConcurrentCommits int
 }
 
-func NewDatastoreBatcher(dest DatastoreBatcherDestination, batchSize, maxRetries, backoff int) *DatastoreBatcher {
-	if batchSize <= 0 {
+// A batcher utilty for datastores
+type DatastoreBatcher struct {
+	config            *DatastoreBatcherConfig
+	dest              DatastoreBatcherDestination
+	bufferLength      int
+	buffer            []*DatastorePayload
+	concurrentCommits chan int8
+}
+
+func NewDatastoreBatcher(dest DatastoreBatcherDestination, config *DatastoreBatcherConfig) *DatastoreBatcher {
+	if config.BatchSize <= 0 {
 		log.Printf("WARNING: batchSize <= 0, setting to default of 1")
-		batchSize = 1
+		config.BatchSize = 1
+	}
+
+	if config.MaxConcurrentCommits <= 0 {
+		log.Printf("WARNING: MaxConcurrentCommits <= 0, setting to default of 3")
+		config.MaxConcurrentCommits = 3
 	}
 
 	return &DatastoreBatcher{
-		dest:         dest,
-		batchSize:    batchSize,
-		maxRetries:   maxRetries,
-		backoff:      backoff,
-		bufferLength: 0,
-		buffer:       nil,
+		config:            config,
+		dest:              dest,
+		bufferLength:      0,
+		buffer:            nil,
+		concurrentCommits: make(chan int8, config.MaxConcurrentCommits),
 	}
 }
 
 func (db *DatastoreBatcher) Write(payload *DatastorePayload) error {
 	if db.buffer == nil {
-		db.buffer = make([]*DatastorePayload, db.batchSize)
+		db.buffer = make([]*DatastorePayload, db.config.BatchSize)
 	}
 
 	db.buffer[db.bufferLength] = payload
 	db.bufferLength++
 
 	// If the buffer is at our batch size, flush it
-	if db.bufferLength >= db.batchSize {
+	if db.bufferLength >= db.config.BatchSize {
 		db.Flush()
 	}
 
@@ -104,6 +114,7 @@ func (db *DatastoreBatcher) Flush() error {
 	db.bufferLength = 0
 
 	// Run the commit function in a goroutine
+	db.concurrentCommits <- 1
 	go db.commit(buffer)
 
 	return nil
@@ -112,7 +123,12 @@ func (db *DatastoreBatcher) Flush() error {
 func (db *DatastoreBatcher) commit(buffer []*DatastorePayload) {
 	var err error
 
-	retries := db.maxRetries
+	// Clear our concurrent commit semaphore
+	defer func() {
+		<-db.concurrentCommits
+	}()
+
+	retries := db.config.MaxRetries
 
 	for {
 		err = db.dest.Commit(buffer)
@@ -124,7 +140,7 @@ func (db *DatastoreBatcher) commit(buffer []*DatastorePayload) {
 			break
 		}
 
-		time.Sleep(time.Duration(db.backoff) * time.Millisecond)
+		time.Sleep(time.Duration(db.config.Backoff) * time.Millisecond)
 		retries--
 	}
 

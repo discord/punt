@@ -13,13 +13,13 @@ import (
 )
 
 var NoConnectionError = errors.New("No clickhouse connection available")
+var InvalidSourceType = errors.New("Invalid source type")
+var InvalidDestType = errors.New("Invalid destination type")
 
 type ClickhouseConfig struct {
-	URL        string
-	Types      map[string]ClickhouseTypeConfig
-	BatchSize  int
-	MaxRetries int
-	Backoff    int
+	URL   string
+	Types map[string]ClickhouseTypeConfig
+	DatastoreBatcherConfig
 }
 
 type ClickhouseTypeConfig struct {
@@ -52,7 +52,7 @@ func NewClickhouseDatastore(config map[string]interface{}) *ClickhouseDatastore 
 }
 
 func (c *ClickhouseDatastore) Initialize() error {
-	c.batcher = NewDatastoreBatcher(c, c.config.BatchSize, c.config.MaxRetries, c.config.Backoff)
+	c.batcher = NewDatastoreBatcher(c, &c.config.DatastoreBatcherConfig)
 	c.connect()
 	log.Printf("    connection to clickhouse opened")
 	c.prepareQueries()
@@ -76,7 +76,6 @@ func (c *ClickhouseDatastore) Commit(payloads []*DatastorePayload) error {
 	if c.db == nil {
 		c.connect()
 		if c.db == nil {
-			// TODO(az): retry / backoff logic? Should go in batch?
 			log.Printf("[CH] WARNING: failed to commit, no active database connection")
 			return NoConnectionError
 		}
@@ -173,11 +172,90 @@ func (c *ClickhouseDatastore) prepare(payload *DatastorePayload) ([]interface{},
 	columns[0] = payload.Timestamp
 	columns[1] = payload.Timestamp
 
+	var err error
+	var converted interface{}
+
 	idx := 0
 	for _, fieldConfig := range typeConfig.Fields {
-		// TODO(az): type conversion
 		columns[idx+2] = payload.ReadDataPath(fieldConfig.Source)
+
+		if fieldConfig.Type != "" {
+			converted, err = ConvertType(columns[idx+2], fieldConfig.Type)
+			if err != nil {
+				return nil, err
+			}
+
+			columns[idx+2] = converted
+		}
+
+		idx++
 	}
 
 	return columns, nil
+}
+
+func ConvertType(value interface{}, destType string) (interface{}, error) {
+	switch value.(type) {
+	case int:
+		return convertTypeFromInt(value.(int), destType)
+	case uint:
+		return convertTypeFromUInt(value.(uint), destType)
+	case float32:
+		return convertTypeFromFloat(float64(value.(float32)), destType)
+	case float64:
+		return convertTypeFromFloat(value.(float64), destType)
+	default:
+		return nil, InvalidSourceType
+	}
+}
+
+func convertTypeFromInt(value int, destType string) (interface{}, error) {
+	switch destType {
+	case "int":
+		return value, nil
+	case "uint":
+		return uint(value), nil
+	case "float32":
+		return float32(value), nil
+	case "float64":
+		return float64(value), nil
+	case "string":
+		return string(value), nil
+	default:
+		return nil, InvalidDestType
+	}
+}
+
+func convertTypeFromFloat(value float64, destType string) (interface{}, error) {
+	switch destType {
+	case "int":
+		return int(value), nil
+	case "uint":
+		return uint(value), nil
+	case "float32":
+		return value, nil
+	case "float64":
+		return value, nil
+	case "string":
+		return fmt.Sprintf("%v", value), nil
+	default:
+		return nil, InvalidDestType
+	}
+}
+
+func convertTypeFromUInt(value uint, destType string) (interface{}, error) {
+	switch destType {
+	case "int":
+		return int(value), nil
+	case "uint":
+		return value, nil
+	case "float32":
+		return float32(value), nil
+	case "float64":
+		return float64(value), nil
+	case "string":
+		return string(value), nil
+	default:
+		return nil, InvalidDestType
+	}
 }
