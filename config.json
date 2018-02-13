@@ -1,7 +1,24 @@
 {
   "clusters": {
     "default": {
-      "url": "http://localhost:9200",
+      "datastores": {
+        "ch": {
+          "type": "clickhouse",
+          "config": {
+            "url": "tcp://127.0.0.1:9000",
+            "types": {
+              "*": {
+                "table": "test",
+                "fields": {
+                  "content": {
+                    "source": "content"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
       "num_workers": 1,
       "bulk_size": 3,
       "commit_interval": 0,
@@ -12,35 +29,15 @@
       "servers": [
         {
           "type": "udp",
-          "bind": "localhost:5679",
-          "buffer_size": 10
+          "bind": "localhost:5679"
         },
         {
           "type": "tcp",
           "bind": "localhost:5678",
-          "buffer_size": 10,
           "octet_counted": true
         }
       ],
       "debug": true
-    }
-  },
-  "clickhouse": {
-    "url": "tcp://127.0.0.1:9000",
-    "bulk_size": 5,
-    "buffer_size": 100,
-    "types": {
-      "audit": {
-        "table": "test",
-        "fields": [
-          "content",
-          "hostname",
-          "pid",
-          "priority",
-          "source",
-          "tag"
-        ]
-      }
     }
   },
   "types": {

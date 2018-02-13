@@ -2,64 +2,120 @@ package punt
 
 import (
 	"database/sql"
-	"errors"
 	"fmt"
 	"log"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/kshvakov/clickhouse"
+	"github.com/mitchellh/mapstructure"
 )
 
-var BufferFull error = errors.New("Clickhouse buffer is full, dropping message")
-
 type ClickhouseConfig struct {
-	URL        string                          `json:"url"`
-	Types      map[string]ClickhouseTypeConfig `json:"types"`
-	BufferSize int                             `json:"buffer_size"`
-	BulkSize   int                             `json:"bulk_size"`
+	URL       string
+	Types     map[string]ClickhouseTypeConfig
+	BatchSize int
 }
 
 type ClickhouseTypeConfig struct {
-	Table  string   `json:"table"`
-	Fields []string `json:"fields"`
+	Table  string
+	Fields map[string]ClickhouseFieldConfig
 }
 
-type ClickhousePayload struct {
-	TypeName  string
-	Timestamp time.Time
-	Payload   map[string]interface{}
+type ClickhouseFieldConfig struct {
+	Source string
+	Type   string
 }
 
-type Clickhouse struct {
-	Config *ClickhouseConfig
-
-	writeLock         sync.Mutex
-	bulkBufferIdx     int
-	bulkBuffer        []*ClickhousePayload
-	writeBuffer       chan []*ClickhousePayload
+type ClickhouseDatastore struct {
+	config            *ClickhouseConfig
+	batcher           *DatastoreBatcher
 	db                *sql.DB
 	typeInsertQueries map[string]string
 }
 
-func NewClickhouse(config *ClickhouseConfig) *Clickhouse {
-	clickhouse := &Clickhouse{
-		Config:            config,
-		bulkBufferIdx:     0,
-		bulkBuffer:        make([]*ClickhousePayload, config.BulkSize),
-		writeBuffer:       make(chan []*ClickhousePayload, config.BufferSize),
+func NewClickhouseDatastore(config map[string]interface{}) *ClickhouseDatastore {
+	clickhouse := &ClickhouseDatastore{
+		config:            &ClickhouseConfig{},
+		db:                nil,
 		typeInsertQueries: make(map[string]string),
 	}
-	go clickhouse.writeThread()
-	go clickhouse.writeSweeper()
-	clickhouse.initialize()
-	clickhouse.connect()
+
+	mapstructure.Decode(config, clickhouse.config)
+
 	return clickhouse
 }
 
-func (c *Clickhouse) connect() {
-	db, err := sql.Open("clickhouse", c.Config.URL)
+func (c *ClickhouseDatastore) Initialize() error {
+	c.batcher = NewDatastoreBatcher(c, c.config.BatchSize)
+	c.connect()
+	c.prepareQueries()
+	return nil
+}
+
+func (c *ClickhouseDatastore) Write(payload *DatastorePayload) error {
+	return c.batcher.Write(payload)
+}
+
+func (c *ClickhouseDatastore) Flush() error {
+	return c.batcher.Flush()
+}
+
+func (c *ClickhouseDatastore) Commit(payloads []*DatastorePayload) error {
+	if c.db == nil {
+		c.connect()
+		if c.db == nil {
+			// TODO(az): retry / backoff logic? Should go in batch?
+			log.Printf("[CH] WARNING: failed to commit, no active database connection")
+			return nil
+		}
+	}
+
+	// Map of table to transaction
+	tx, err := c.db.Begin()
+	if err != nil {
+		// TODO(az)
+		return err
+	}
+
+	var exists bool
+	var query *sql.Stmt
+	queries := make(map[string]*sql.Stmt)
+
+	for _, payload := range payloads {
+		if _, exists := c.typeInsertQueries[payload.TypeName]; !exists {
+			log.Printf("SKIPPING: %v", payload.TypeName)
+			continue
+		}
+
+		if _, exists = queries[payload.TypeName]; !exists {
+			log.Printf("PREPARE: %v", c.typeInsertQueries[payload.TypeName])
+			q, err := tx.Prepare(c.typeInsertQueries[payload.TypeName])
+			if err != nil {
+				// TODO(az): see above
+				return err
+			}
+			queries[payload.TypeName] = q
+		}
+
+		query = queries[payload.TypeName]
+		row, err := c.prepare(payload)
+		if err != nil {
+			// TODO(az): see above
+			return err
+		}
+
+		_, err = query.Exec(row...)
+		if err != nil {
+			// TODO(az): see above
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+func (c *ClickhouseDatastore) connect() {
+	db, err := sql.Open("clickhouse", c.config.URL)
 	if err != nil {
 		log.Printf("[CH] WARNING: failed to connect to clickhouse: %v", err)
 		return
@@ -78,135 +134,45 @@ func (c *Clickhouse) connect() {
 	c.db = db
 }
 
-func (c *Clickhouse) initialize() {
-	for typeName, typeConfig := range c.Config.Types {
-		qmarks := make([]string, len(typeConfig.Fields)+2)
-		for idx := 0; idx < len(typeConfig.Fields)+2; idx++ {
-			qmarks[idx] = "?"
+func (c *ClickhouseDatastore) prepareQueries() {
+	for typeName, typeConfig := range c.config.Types {
+		// Create an array of our field names
+		fields := []string{"date", "time"}
+		for fieldName, _ := range typeConfig.Fields {
+			fields = append(fields, fieldName)
 		}
 
-		fields := []string{"date", "time"}
-
-		for _, field := range typeConfig.Fields {
-			fields = append(fields, field)
+		// Create an array of question marks
+		argumentFillers := make([]string, len(fields))
+		for idx, _ := range argumentFillers {
+			argumentFillers[idx] = "?"
 		}
 
 		c.typeInsertQueries[typeName] = fmt.Sprintf(
 			"INSERT INTO %s (%s) VALUES (%s)",
 			typeConfig.Table,
 			strings.Join(fields, ", "),
-			strings.Join(qmarks, ", "),
+			strings.Join(argumentFillers, ", "),
 		)
 	}
 }
 
-func (c *Clickhouse) Write(typeName string, timestamp time.Time, payload map[string]interface{}) error {
-	if _, exists := c.typeInsertQueries[typeName]; !exists {
-		return nil
+// Takes a payload and returns an array of columns
+func (c *ClickhouseDatastore) prepare(payload *DatastorePayload) ([]interface{}, error) {
+	typeConfig, exists := c.config.Types[payload.TypeName]
+	if !exists {
+		return nil, nil
 	}
 
-	c.writeLock.Lock()
-	defer c.writeLock.Unlock()
+	columns := make([]interface{}, len(typeConfig.Fields)+2)
+	columns[0] = payload.Timestamp
+	columns[1] = payload.Timestamp
 
-	c.bulkBuffer[c.bulkBufferIdx] = &ClickhousePayload{typeName, timestamp, payload}
-	c.bulkBufferIdx++
-	if c.bulkBufferIdx >= c.Config.BulkSize {
-		select {
-		case c.writeBuffer <- c.bulkBuffer:
-			break
-		default:
-			return BufferFull
-		}
-
-		c.bulkBuffer = make([]*ClickhousePayload, cap(c.bulkBuffer))
-		c.bulkBufferIdx = 0
+	idx := 0
+	for _, fieldConfig := range typeConfig.Fields {
+		// TODO(az): type conversion
+		columns[idx+2] = payload.ReadDataPath(fieldConfig.Source)
 	}
 
-	return nil
-}
-
-func (c *Clickhouse) writeSweeper() {
-	ticker := time.NewTicker(time.Second * 5)
-	for range ticker.C {
-		c.writeLock.Lock()
-		c.writeBuffer <- c.bulkBuffer
-		c.bulkBuffer = make([]*ClickhousePayload, cap(c.bulkBuffer))
-		c.bulkBufferIdx = 0
-		c.writeLock.Unlock()
-	}
-}
-
-func (c *Clickhouse) writeThread() {
-	var insertMap map[string][][]interface{}
-	var err error
-	var bulkPayload []*ClickhousePayload
-
-	for {
-		insertMap = make(map[string][][]interface{})
-		bulkPayload = <-c.writeBuffer
-
-		for _, payload := range bulkPayload {
-			if payload == nil {
-				break
-			}
-
-			if _, exists := insertMap[payload.TypeName]; !exists {
-				insertMap[payload.TypeName] = make([][]interface{}, 0)
-			}
-
-			insertMap[payload.TypeName] = append(insertMap[payload.TypeName], c.preparePayload(payload))
-		}
-
-		for typeName, inserts := range insertMap {
-			err = c.write(typeName, inserts)
-			if err != nil {
-				log.Printf("[CH] error writing bulk data: %v", err)
-			}
-		}
-	}
-}
-
-func (c *Clickhouse) preparePayload(payload *ClickhousePayload) []interface{} {
-	typeConfig := c.Config.Types[payload.TypeName]
-	args := make([]interface{}, len(typeConfig.Fields)+2)
-
-	args[0] = payload.Timestamp
-	args[1] = args[0]
-	for idx, fieldName := range typeConfig.Fields {
-		args[idx+2] = payload.Payload[fieldName]
-	}
-
-	return args
-}
-
-func (c *Clickhouse) write(typeName string, inserts [][]interface{}) error {
-	if c.db == nil {
-		c.connect()
-		if c.db == nil {
-			return nil
-		}
-		return nil
-	}
-
-	tx, err := c.db.Begin()
-	if err != nil {
-		c.db = nil
-		return err
-	}
-
-	query, err := tx.Prepare(c.typeInsertQueries[typeName])
-
-	for _, insert := range inserts {
-		_, err = query.Exec(insert...)
-		if err != nil {
-			return err
-		}
-	}
-
-	err = tx.Commit()
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return columns, nil
 }

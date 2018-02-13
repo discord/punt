@@ -1,7 +1,6 @@
 package punt
 
 import (
-	"context"
 	"crypto/tls"
 	"fmt"
 	"log"
@@ -14,10 +13,6 @@ import (
 	"github.com/discordapp/punt/lib/syslog"
 	"github.com/olivere/elastic"
 )
-
-type ClusterOutputWriter interface {
-	Write(string, time.Time, map[string]interface{}) error
-}
 
 type ClusterServerConfig struct {
 	Type         string `json:"type"`
@@ -33,14 +28,16 @@ type ClusterReliabilityConfig struct {
 }
 
 type ClusterConfig struct {
-	URL            string                   `json:"url"`
-	NumWorkers     int                      `json:"num_workers"`
-	BulkSize       int                      `json:"bulk_size"`
-	CommitInterval int                      `json:"commit_interval"`
-	Reliability    ClusterReliabilityConfig `json:"reliability"`
-	Servers        []ClusterServerConfig    `json:"servers"`
-	Debug          bool                     `json:"debug"`
-	BufferSize     int                      `json:"buffer_size"`
+	URL        string                 `json:"url"`
+	NumWorkers int                    `json:"num_workers"`
+	BulkSize   int                    `json:"bulk_size"`
+	Datastores map[string]interface{} `json:"datastores"`
+	Servers    []ClusterServerConfig  `json:"servers"`
+	Debug      bool                   `json:"debug"`
+	BufferSize int                    `json:"buffer_size"`
+
+	// CommitInterval int                      `json:"commit_interval"`
+	// Reliability    ClusterReliabilityConfig `json:"reliability"`
 }
 
 type Cluster struct {
@@ -48,7 +45,6 @@ type Cluster struct {
 	State    *State
 	Config   ClusterConfig
 	Incoming chan *elastic.BulkIndexRequest
-	Outputs  []ClusterOutputWriter
 
 	metrics     *statsd.Client
 	messages    chan syslog.SyslogData
@@ -56,7 +52,6 @@ type Cluster struct {
 	reliability int
 	exit        chan bool
 	workers     []*ClusterWorker
-	esClient    *elastic.Client
 }
 
 func NewCluster(state *State, name string, config ClusterConfig) *Cluster {
@@ -70,7 +65,6 @@ func NewCluster(state *State, name string, config ClusterConfig) *Cluster {
 		State:    state,
 		Config:   config,
 		Incoming: make(chan *elastic.BulkIndexRequest),
-		Outputs:  make([]ClusterOutputWriter, 0),
 		metrics:  NewStatsdClient("punt", []string{fmt.Sprintf("cluster-name:%s", name)}),
 		messages: make(chan syslog.SyslogData, config.BufferSize),
 		hostname: name,
@@ -79,28 +73,24 @@ func NewCluster(state *State, name string, config ClusterConfig) *Cluster {
 	}
 }
 
-func (c *Cluster) AddOutput(output ClusterOutputWriter) {
-	c.Outputs = append(c.Outputs, output)
-}
-
 func (c *Cluster) Run() error {
 	log.Printf("Cluster %v is starting up", c.Name)
 
-	client, err := elastic.NewClient(elastic.SetURL(c.Config.URL))
-	if err != nil {
-		return err
-	}
-	c.esClient = client
-	log.Printf("  successfully setup elasticsearch")
+	// client, err := elastic.NewClient(elastic.SetURL(c.Config.URL))
+	// if err != nil {
+	// 	return err
+	// }
+	// c.esClient = client
+	// log.Printf("  successfully setup elasticsearch")
 
 	// Sync all the type settings we have
-	for typeName, typ := range c.State.Types {
-		err = typ.SyncIndexTemplate(client, c.State.Config)
-		if err != nil {
-			log.Printf("  ERROR: failed to sync index template for type %v", typeName)
-		}
-	}
-	log.Printf("  successfully synced type index templates")
+	// for typeName, typ := range c.State.Types {
+	// 	err := typ.SyncIndexTemplate(client, c.State.Config)
+	// 	if err != nil {
+	// 		log.Printf("  ERROR: failed to sync index template for type %v", typeName)
+	// 	}
+	// }
+	// log.Printf("  successfully synced type index templates")
 
 	// Spawn the index GC goroutine
 	if len(c.State.Config.GC) > 0 {
@@ -120,21 +110,21 @@ func (c *Cluster) Run() error {
 }
 
 func (c *Cluster) gcIndexes() {
-	runGC := func() {
-		for prefix, gcConfig := range c.State.Config.GC {
-			GCIndexes(c.esClient, prefix, gcConfig)
-		}
-	}
-
-	// Run the GC once on startup
-	runGC()
-
-	// And then in a loop every 15 minutes
-	ticker := time.NewTicker(time.Minute * 15)
-
-	for range ticker.C {
-		runGC()
-	}
+	// runGC := func() {
+	// 	for prefix, gcConfig := range c.State.Config.GC {
+	// 		GCIndexes(c.esClient, prefix, gcConfig)
+	// 	}
+	// }
+	//
+	// // Run the GC once on startup
+	// runGC()
+	//
+	// // And then in a loop every 15 minutes
+	// ticker := time.NewTicker(time.Minute * 15)
+	//
+	// for range ticker.C {
+	// 	runGC()
+	// }
 }
 
 func (c *Cluster) spawnWorkers() {
@@ -226,26 +216,34 @@ func (c *Cluster) startServer(config ClusterServerConfig) {
 type ClusterWorker struct {
 	Cluster *Cluster
 
-	name   string
-	lock   *sync.RWMutex
-	exit   chan bool
-	esBulk *elastic.BulkService
+	datastores []Datastore
+	name       string
+	lock       *sync.RWMutex
+	exit       chan bool
 }
 
 func NewClusterWorker(cluster *Cluster) *ClusterWorker {
+	datastores := make([]Datastore, 0)
+	for _, datastore := range cluster.Config.Datastores {
+		datastoreType := datastore.(map[string]interface{})["type"].(string)
+		datastoreConfig := datastore.(map[string]interface{})["config"].(map[string]interface{})
+		datastore := CreateDatastore(datastoreType, datastoreConfig)
+		datastore.Initialize()
+		datastores = append(datastores, datastore)
+	}
+
 	return &ClusterWorker{
-		Cluster: cluster,
-		lock:    &sync.RWMutex{},
-		exit:    make(chan bool, 0),
+		Cluster:    cluster,
+		datastores: datastores,
+		lock:       &sync.RWMutex{},
+		exit:       make(chan bool, 0),
 	}
 }
 
 func (cw *ClusterWorker) run() {
-	cw.esBulk = cw.Cluster.esClient.Bulk()
-
-	if cw.Cluster.Config.CommitInterval > 0 {
-		go cw.commitLoop(cw.Cluster.Config.CommitInterval)
-	}
+	// if cw.Cluster.Config.CommitInterval > 0 {
+	// 	go cw.commitLoop(cw.Cluster.Config.CommitInterval)
+	// }
 
 	var startProcessing time.Time
 	var err error
@@ -263,6 +261,7 @@ func (cw *ClusterWorker) run() {
 			typ := cw.Cluster.State.Types[tag]
 
 			if typ == nil {
+				tag = "*"
 				typ = cw.Cluster.State.Types["*"]
 
 				if typ == nil {
@@ -291,7 +290,7 @@ func (cw *ClusterWorker) run() {
 				mutator.Mutate(payload)
 			}
 
-			indexString := typ.Config.Prefix + timestamp.Format(typ.Config.DateFormat)
+			// indexString := typ.Config.Prefix + timestamp.Format(typ.Config.DateFormat)
 			payload["@timestamp"] = timestamp.Format("2006-01-02T15:04:05+00:00")
 			payload["punt-server"] = cw.Cluster.hostname
 
@@ -299,7 +298,7 @@ func (cw *ClusterWorker) run() {
 			cw.Cluster.metrics.Timing("processing_latency", time.Now().Sub(startProcessing), statsTags, 1)
 
 			if cw.Cluster.Config.Debug {
-				log.Printf("(%v) %v", indexString, payload)
+				log.Printf("(%v) %v", tag, payload)
 			}
 
 			// Distribute the message to all subscribers, using non-blocking send
@@ -314,25 +313,26 @@ func (cw *ClusterWorker) run() {
 				alert.Run(payload)
 			}
 
-			for _, outputter := range cw.Cluster.Outputs {
-				err = outputter.Write(tag, timestamp, payload)
-				if err != nil && cw.Cluster.Config.Debug {
-					log.Printf("WARNING outputter failed: %v", err)
-				}
-			}
-
 			// Grab a read lock
-			cw.lock.RLock()
+			// cw.lock.RLock()
 
 			// Add our index request to the bulk request
-			cw.esBulk.Add(elastic.NewBulkIndexRequest().Index(indexString).Type(typ.Config.MappingType).Doc(payload))
+			// cw.esBulk.Add(elastic.NewBulkIndexRequest().Index(indexString).Type(typ.Config.MappingType).Doc(payload))
+			datastorePayload := &DatastorePayload{
+				TypeName:  tag,
+				Timestamp: timestamp,
+				Data:      payload,
+			}
+			for _, datastore := range cw.datastores {
+				datastore.Write(datastorePayload)
+			}
 
 			// If we're above the bulk size request a commit (new goroutine to avoid deadlock)
-			if cw.esBulk.NumberOfActions() >= cw.Cluster.Config.BulkSize {
-				go cw.commit()
-			}
-			cw.lock.RUnlock()
-
+			// if cw.esBulk.NumberOfActions() >= cw.Cluster.Config.BulkSize {
+			// 	go cw.commit()
+			// }
+			// cw.lock.RUnlock()
+			//
 			cw.Cluster.metrics.Incr("msgs.processed", statsTags, 1)
 		case <-cw.exit:
 			return
@@ -341,59 +341,63 @@ func (cw *ClusterWorker) run() {
 }
 
 func (cw *ClusterWorker) commitLoop(interval int) {
-	timer := time.NewTicker(time.Duration(interval) * time.Second)
+	/*
+		timer := time.NewTicker(time.Duration(interval) * time.Second)
 
-	for {
-		<-timer.C
+		for {
+			<-timer.C
 
-		cw.lock.RLock()
-		if cw.esBulk.NumberOfActions() > 0 {
-			go cw.commit()
+			cw.lock.RLock()
+			if cw.esBulk.NumberOfActions() > 0 {
+				go cw.commit()
+			}
+			cw.lock.RUnlock()
 		}
-		cw.lock.RUnlock()
-	}
+	*/
 }
 
 func (cw *ClusterWorker) commit() {
-	startCommitTime := time.Now()
+	/*
+		startCommitTime := time.Now()
 
-	cw.lock.Lock()
-	defer cw.lock.Unlock()
+		cw.lock.Lock()
+		defer cw.lock.Unlock()
 
-	if cw.esBulk.NumberOfActions() <= 0 {
-		return
-	}
-
-	actions := int64(cw.esBulk.NumberOfActions())
-	if cw.Cluster.Config.Debug {
-		log.Printf("Commiting %v entries", actions)
-	}
-
-	success := false
-	attempts := 0
-
-	for cw.Cluster.Config.Reliability.InsertRetries == -1 || cw.Cluster.Config.Reliability.InsertRetries > attempts {
-		attempts += 1
-
-		ctx := context.Background()
-		startWriteTime := time.Now()
-		_, err := cw.esBulk.Do(ctx)
-
-		if err != nil {
-			log.Printf("Failed to insert to ES (attempt #%v): %v", attempts, err)
-			time.Sleep(time.Duration(cw.Cluster.Config.Reliability.RetryDelay) * time.Millisecond)
-		} else {
-			cw.Cluster.metrics.Count("msgs.inserted", actions, []string{}, 1)
-			cw.Cluster.metrics.Timing("write_latency", time.Now().Sub(startWriteTime), []string{}, 1)
-			success = true
-			break
+		if cw.esBulk.NumberOfActions() <= 0 {
+			return
 		}
-	}
 
-	if !success {
-		cw.Cluster.metrics.Count("msgs.dropped", actions, []string{}, 1)
-	}
+		actions := int64(cw.esBulk.NumberOfActions())
+		if cw.Cluster.Config.Debug {
+			log.Printf("Commiting %v entries", actions)
+		}
 
-	cw.esBulk = cw.Cluster.esClient.Bulk()
-	cw.Cluster.metrics.Timing("commit_latency", time.Now().Sub(startCommitTime), []string{}, 1)
+		success := false
+		attempts := 0
+
+		for cw.Cluster.Config.Reliability.InsertRetries == -1 || cw.Cluster.Config.Reliability.InsertRetries > attempts {
+			attempts += 1
+
+			ctx := context.Background()
+			startWriteTime := time.Now()
+			_, err := cw.esBulk.Do(ctx)
+
+			if err != nil {
+				log.Printf("Failed to insert to ES (attempt #%v): %v", attempts, err)
+				time.Sleep(time.Duration(cw.Cluster.Config.Reliability.RetryDelay) * time.Millisecond)
+			} else {
+				cw.Cluster.metrics.Count("msgs.inserted", actions, []string{}, 1)
+				cw.Cluster.metrics.Timing("write_latency", time.Now().Sub(startWriteTime), []string{}, 1)
+				success = true
+				break
+			}
+		}
+
+		if !success {
+			cw.Cluster.metrics.Count("msgs.dropped", actions, []string{}, 1)
+		}
+
+		cw.esBulk = cw.Cluster.esClient.Bulk()
+		cw.Cluster.metrics.Timing("commit_latency", time.Now().Sub(startCommitTime), []string{}, 1)
+	*/
 }

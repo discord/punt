@@ -12,7 +12,6 @@ type ControlSocketConfig struct {
 
 type Config struct {
 	Clusters      map[string]ClusterConfig `json:"clusters"`
-	Clickhouse    *ClickhouseConfig        `json:"clickhouse"`
 	Types         map[string]TypeConfig    `json:"types"`
 	Mappings      map[string]Mapping       `json:"mappings"`
 	Alerts        map[string]AlertConfig   `json:"alerts"`
