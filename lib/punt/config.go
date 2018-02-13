@@ -13,11 +13,9 @@ type ControlSocketConfig struct {
 type Config struct {
 	Clusters      map[string]ClusterConfig `json:"clusters"`
 	Types         map[string]TypeConfig    `json:"types"`
-	Mappings      map[string]Mapping       `json:"mappings"`
 	Alerts        map[string]AlertConfig   `json:"alerts"`
 	Actions       map[string]ActionConfig  `json:"actions"`
 	ControlSocket ControlSocketConfig      `json:"control_socket"`
-	GC            map[string]GCConfig      `json:"gc"`
 }
 
 func LoadConfig(path string) (*Config, error) {

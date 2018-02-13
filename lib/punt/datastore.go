@@ -40,6 +40,9 @@ type Datastore interface {
 	// Called periodically to flush any batched/queued records. This can be ignored
 	//  for datastores that do not implement batching/queueing.
 	Flush() error
+
+	// Called periodically to delete old data.
+	Prune(string, time.Duration) error
 }
 
 type DatastoreBatcherDestination interface {
@@ -50,11 +53,13 @@ type DatastoreBatcherDestination interface {
 type DatastoreBatcher struct {
 	dest         DatastoreBatcherDestination
 	batchSize    int
+	maxRetries   int
+	backoff      int
 	bufferLength int
 	buffer       []*DatastorePayload
 }
 
-func NewDatastoreBatcher(dest DatastoreBatcherDestination, batchSize int) *DatastoreBatcher {
+func NewDatastoreBatcher(dest DatastoreBatcherDestination, batchSize, maxRetries, backoff int) *DatastoreBatcher {
 	if batchSize <= 0 {
 		log.Printf("WARNING: batchSize <= 0, setting to default of 1")
 		batchSize = 1
@@ -63,6 +68,8 @@ func NewDatastoreBatcher(dest DatastoreBatcherDestination, batchSize int) *Datas
 	return &DatastoreBatcher{
 		dest:         dest,
 		batchSize:    batchSize,
+		maxRetries:   maxRetries,
+		backoff:      backoff,
 		bufferLength: 0,
 		buffer:       nil,
 	}
@@ -76,7 +83,7 @@ func (db *DatastoreBatcher) Write(payload *DatastorePayload) error {
 	db.buffer[db.bufferLength] = payload
 	db.bufferLength++
 
-	// If the buffer is ready to commit, take a local copy and clear it
+	// If the buffer is at our batch size, flush it
 	if db.bufferLength >= db.batchSize {
 		db.Flush()
 	}
@@ -85,18 +92,43 @@ func (db *DatastoreBatcher) Write(payload *DatastorePayload) error {
 }
 
 func (db *DatastoreBatcher) Flush() error {
+	if db.bufferLength == 0 {
+		return nil
+	}
+
+	// Take a local copy to the buffer
 	buffer := db.buffer
+
+	// Clear out the stored buffer / length
 	db.buffer = nil
 	db.bufferLength = 0
+
+	// Run the commit function in a goroutine
 	go db.commit(buffer)
+
 	return nil
 }
 
 func (db *DatastoreBatcher) commit(buffer []*DatastorePayload) {
-	err := db.dest.Commit(buffer)
-	if err != nil {
-		log.Printf("WARNING: DatastoreBatcher failed to commit: %v", err)
+	var err error
+
+	retries := db.maxRetries
+
+	for {
+		err = db.dest.Commit(buffer)
+		if err == nil {
+			return
+		}
+
+		if retries <= 0 {
+			break
+		}
+
+		time.Sleep(time.Duration(db.backoff) * time.Millisecond)
+		retries--
 	}
+
+	log.Printf("FAILED: DatastoreBatcher failed to commit: %v", err)
 }
 
 func CreateDatastore(datastoreType string, datastoreConfig map[string]interface{}) Datastore {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/kshvakov/clickhouse"
 	"github.com/mitchellh/mapstructure"
@@ -14,9 +15,11 @@ import (
 var NoConnectionError = errors.New("No clickhouse connection available")
 
 type ClickhouseConfig struct {
-	URL       string
-	Types     map[string]ClickhouseTypeConfig
-	BatchSize int
+	URL        string
+	Types      map[string]ClickhouseTypeConfig
+	BatchSize  int
+	MaxRetries int
+	Backoff    int
 }
 
 type ClickhouseTypeConfig struct {
@@ -49,9 +52,11 @@ func NewClickhouseDatastore(config map[string]interface{}) *ClickhouseDatastore 
 }
 
 func (c *ClickhouseDatastore) Initialize() error {
-	c.batcher = NewDatastoreBatcher(c, c.config.BatchSize)
+	c.batcher = NewDatastoreBatcher(c, c.config.BatchSize, c.config.MaxRetries, c.config.Backoff)
 	c.connect()
+	log.Printf("    connection to clickhouse opened")
 	c.prepareQueries()
+	log.Printf("    prepared all clickhouse queries")
 	return nil
 }
 
@@ -61,6 +66,10 @@ func (c *ClickhouseDatastore) Write(payload *DatastorePayload) error {
 
 func (c *ClickhouseDatastore) Flush() error {
 	return c.batcher.Flush()
+}
+
+func (c *ClickhouseDatastore) Prune(typeName string, keepDuration time.Duration) error {
+	return nil
 }
 
 func (c *ClickhouseDatastore) Commit(payloads []*DatastorePayload) error {
@@ -127,7 +136,6 @@ func (c *ClickhouseDatastore) connect() {
 		return
 	}
 
-	log.Printf("[CH] Connected OK")
 	c.db = db
 }
 

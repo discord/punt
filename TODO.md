@@ -1,14 +1,7 @@
-- Expand datastorebatcher to support;
-  - Backoffs
-  - Better error logging
-  - Retries
 - Finish up clickhouse
   - type casting
   - error handling
-  - how to we handle one row that failed out of a batch?
   - etc?
-- Refactor elasticsearch into a datastore
-- Add GC support to datastores?
-  - Per-data store or abstracted?
+- Finish up elasticsearch
+  - index templates
 - Cleanup?
-

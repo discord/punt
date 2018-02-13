@@ -1,27 +1,19 @@
 package punt
 
 import (
-	"context"
 	"log"
-
-	"github.com/olivere/elastic"
+	"time"
 )
 
 type TypeConfig struct {
-	Prefix      string `json:"prefix"`
-	MappingType string `json:"mapping_type"`
-	DateFormat  string `json:"date_format"`
 	Transformer struct {
 		Name   string                 `json:"name"`
 		Config map[string]interface{} `json:"config"`
 	} `json:"transformer"`
 	Mutators []map[string]interface{} `json:"mutators"`
-	Template *struct {
-		NumReplicas     *int     `json:"num_replicas"`
-		NumShards       *int     `json:"num_shards"`
-		RefreshInterval *string  `json:"refresh_interval"`
-		Mappings        []string `json:"mappings"`
-	} `json:"template"`
+	Prune    *struct {
+		Hours int `json:"hours"`
+	} `json"prune"`
 }
 
 type TypeSubscriber struct {
@@ -39,7 +31,9 @@ type Type struct {
 	Transformer Transformer
 	Mutators    []Mutator
 	Alerts      []*Alert
-	subscribers []*TypeSubscriber
+
+	pruneKeepDuration time.Duration
+	subscribers       []*TypeSubscriber
 }
 
 func NewType(config TypeConfig) *Type {
@@ -53,45 +47,15 @@ func NewType(config TypeConfig) *Type {
 		mutators = append(mutators, inst)
 	}
 
+	var pruneKeepDuration time.Duration
+	if config.Prune != nil {
+		pruneKeepDuration += time.Duration(config.Prune.Hours) * time.Hour
+	}
+
 	return &Type{
-		Config:      config,
-		Transformer: GetTransformer(config.Transformer.Name, config.Transformer.Config),
-		Mutators:    mutators,
+		Config:            config,
+		Transformer:       GetTransformer(config.Transformer.Name, config.Transformer.Config),
+		Mutators:          mutators,
+		pruneKeepDuration: pruneKeepDuration,
 	}
-}
-
-func (t *Type) SyncIndexTemplate(esClient *elastic.Client, config *Config) error {
-	if t.Config.Template == nil {
-		return nil
-	}
-
-	templateConfig := t.Config.Template
-
-	settings := make(map[string]interface{})
-	if templateConfig.NumReplicas != nil {
-		settings["number_of_replicas"] = templateConfig.NumReplicas
-	}
-
-	if templateConfig.NumShards != nil {
-		settings["number_of_shards"] = templateConfig.NumShards
-	}
-
-	if templateConfig.RefreshInterval != nil {
-		settings["refresh_interval"] = templateConfig.RefreshInterval
-	}
-
-	payload := make(map[string]interface{})
-	payload["template"] = t.Config.Prefix + "*"
-	payload["settings"] = settings
-
-	mappings := make(map[string]interface{})
-	for _, mappingName := range templateConfig.Mappings {
-		mappings[mappingName] = config.Mappings[mappingName].GenerateJSON()
-	}
-	payload["mappings"] = mappings
-
-	templateService := elastic.NewIndicesPutTemplateService(esClient)
-	ctx := context.Background()
-	_, err := templateService.BodyJson(payload).Name(t.Config.Prefix + "template").Do(ctx)
-	return err
 }

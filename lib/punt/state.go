@@ -55,10 +55,6 @@ func NewState(config *Config) *State {
 func (s *State) Run() {
 	log.Printf("Attempting to start Punt")
 
-	for mappingName, mapping := range s.Config.Mappings {
-		mapping.Name = mappingName
-	}
-
 	for _, cluster := range s.Clusters {
 		cluster.Run()
 	}

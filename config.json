@@ -6,6 +6,9 @@
           "type": "clickhouse",
           "config": {
             "url": "tcp://127.0.0.1:9000",
+            "batchsize": 1,
+            "maxretries": 3,
+            "backoff": 1000,
             "types": {
               "*": {
                 "table": "test",
@@ -17,15 +20,40 @@
               }
             }
           }
+        },
+        "es": {
+          "type": "elasticsearch",
+          "config": {
+            "url": "http://localhost:9200",
+            "batchsize": 1,
+            "types": {
+              "*": {
+                "prefix": "test-",
+                "dateformat": "2006.01.02.15",
+                "mappingtype": "test"
+              }
+            },
+            "mappings": {
+              "test": {
+                "fields": {
+                  "test": {
+                    "type": "text",
+                    "index": true
+                  }
+                }
+              }
+            },
+            "templates": {
+              "test-*": {
+                "mappings": ["test"]
+              }
+            }
+          }
         }
       },
       "num_workers": 1,
       "bulk_size": 3,
       "commit_interval": 0,
-      "reliability": {
-        "insert_retries": 3,
-        "retry_delay": 1500
-      },
       "servers": [
         {
           "type": "udp",
@@ -42,43 +70,17 @@
   },
   "types": {
     "*": {
-      "prefix": "test-",
-      "mapping_type": "test",
-      "date_format": "2006.01.02.15",
       "transformer": {
         "name": "direct"
+      },
+      "prune": {
+        "hours": 1
       }
     },
     "logs": {
-      "prefix": "logs-",
-      "mapping_type": "test",
-      "date_format": "2006.01.02.15",
       "transformer": {
         "name": "direct"
       }
-    }
-  },
-  "gc": {
-    "test-": {
-      "keep": 1
-    },
-    "logs-": {
-      "keep": 5
-    }
-  },
-  "mappings": {
-    "test": {
-      "fields": {
-        "test": {
-          "type": "text",
-          "index": true
-        }
-      }
-    }
-  },
-  "templates": {
-    "test-*": {
-      "mappings": ["test"]
     }
   },
   "alerts": {
