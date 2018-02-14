@@ -112,7 +112,7 @@ func (db *DatastoreBatcher) Flush() error {
 	}
 
 	// Take a local copy to the buffer
-	buffer := db.buffer
+	buffer := db.buffer[:db.bufferLength]
 
 	// Clear out the stored buffer / length
 	db.buffer = nil
