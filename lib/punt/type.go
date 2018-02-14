@@ -2,7 +2,6 @@ package punt
 
 import (
 	"log"
-	"time"
 )
 
 type TypeConfig struct {
@@ -10,11 +9,9 @@ type TypeConfig struct {
 		Name   string                 `json:"name"`
 		Config map[string]interface{} `json:"config"`
 	} `json:"transformer"`
-	Mutators []map[string]interface{} `json:"mutators"`
-	Prune    *struct {
-		Hours int `json:"hours"`
-	} `json"prune"`
-	FieldTypes map[string]string `json:"field_types"`
+	Mutators   []map[string]interface{} `json:"mutators"`
+	PruneKeep  *int                     `json"prune_keep"`
+	FieldTypes map[string]string        `json:"field_types"`
 }
 
 type TypeSubscriber struct {
@@ -33,8 +30,7 @@ type Type struct {
 	Mutators    []Mutator
 	Alerts      []*Alert
 
-	pruneKeepDuration time.Duration
-	subscribers       []*TypeSubscriber
+	subscribers []*TypeSubscriber
 }
 
 func NewType(config TypeConfig) *Type {
@@ -48,15 +44,9 @@ func NewType(config TypeConfig) *Type {
 		mutators = append(mutators, inst)
 	}
 
-	var pruneKeepDuration time.Duration
-	if config.Prune != nil {
-		pruneKeepDuration += time.Duration(config.Prune.Hours) * time.Hour
-	}
-
 	return &Type{
-		Config:            config,
-		Transformer:       GetTransformer(config.Transformer.Name, config.Transformer.Config),
-		Mutators:          mutators,
-		pruneKeepDuration: pruneKeepDuration,
+		Config:      config,
+		Transformer: GetTransformer(config.Transformer.Name, config.Transformer.Config),
+		Mutators:    mutators,
 	}
 }

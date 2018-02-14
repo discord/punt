@@ -42,7 +42,7 @@ type Datastore interface {
 	Flush() error
 
 	// Called periodically to delete old data.
-	Prune(string, time.Duration) error
+	Prune(string, int) error
 
 	// Returns a list of all types this datastore cares about. If the list is empty
 	//  the datastore will recieve payloads for all types. If it's nil the datastore

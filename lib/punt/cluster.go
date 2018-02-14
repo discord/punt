@@ -68,10 +68,6 @@ func NewCluster(state *State, name string, config ClusterConfig) *Cluster {
 func (c *Cluster) Run() error {
 	log.Printf("Cluster %v is starting up", c.Name)
 
-	// Spawn the index GC goroutine
-	go c.pruneLoop()
-	log.Printf("  successfully started prune worker")
-
 	// Spawn the workers, which process and save incoming messages
 	c.spawnWorkers()
 	log.Printf("  successfully started %v workers", c.Config.NumWorkers)
@@ -79,6 +75,10 @@ func (c *Cluster) Run() error {
 	// Spawn servers, which recieve incoming messages and pass them to workers
 	c.spawnServers()
 	log.Printf("  completed startup")
+
+	// Spawn the prune goroutine
+	go c.pruneLoop()
+	log.Printf("  successfully started prune worker")
 
 	return nil
 }
@@ -169,8 +169,11 @@ func (c *Cluster) startServer(config ClusterServerConfig) {
 }
 
 func (c *Cluster) pruneLoop() {
-	ticker := time.NewTicker(time.Duration(5) * time.Minute)
+	// Prune once on startup
+	c.workers[0].ctrl <- "prune"
 
+	// Then prune every 5 minutes
+	ticker := time.NewTicker(time.Duration(5) * time.Minute)
 	for _ = range ticker.C {
 		c.workers[0].ctrl <- "prune"
 	}

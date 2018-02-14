@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"strings"
-	"time"
 
 	"github.com/kshvakov/clickhouse"
 	"github.com/mitchellh/mapstructure"
@@ -14,18 +13,16 @@ import (
 
 var NoConnectionError = errors.New("No clickhouse connection available")
 
-// var InvalidSourceType = errors.New("Invalid source type")
-// var InvalidDestType = errors.New("Invalid destination type")
-
 type preparedQuery struct {
 	query  string
 	fields []string
 }
 
 type ClickhouseConfig struct {
-	URL     string
-	Types   map[string]ClickhouseTypeConfig
-	Batcher DatastoreBatcherConfig
+	URL             string
+	Types           map[string]ClickhouseTypeConfig
+	Batcher         DatastoreBatcherConfig
+	PartitionFormat string
 }
 
 type ClickhouseTypeConfig struct {
@@ -82,7 +79,43 @@ func (c *ClickhouseDatastore) Flush() error {
 	return c.batcher.Flush()
 }
 
-func (c *ClickhouseDatastore) Prune(typeName string, keepDuration time.Duration) error {
+func (c *ClickhouseDatastore) Prune(typeName string, keep int) error {
+	typeConfig, exists := c.config.Types[typeName]
+	if !exists {
+		return nil
+	}
+
+	// Get a list of all parts for this table
+	rows, err := c.db.Query(`
+		SELECT partition FROM system.parts WHERE table=? GROUP BY partition ORDER BY partition DESC
+	`, typeConfig.Table)
+	if err != nil {
+		return err
+	}
+
+	// Figure out if we should delete any of these
+	var (
+		partition string
+	)
+
+	partitions := []string{}
+	for rows.Next() {
+		err := rows.Scan(&partition)
+		if err != nil {
+			return err
+		}
+
+		partitions = append(partitions, partition)
+	}
+
+	toDelete := partitions[:len(partitions)-keep]
+	for _, partition = range toDelete {
+		_, err = c.db.Exec(fmt.Sprintf("ALTER TABLE %s DROP PARTITION %s", typeConfig.Table, partition))
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -127,6 +160,7 @@ func (c *ClickhouseDatastore) Commit(payloads []*DatastorePayload) error {
 
 		_, err = query.Exec(row...)
 		if err != nil {
+			tx.Rollback()
 			return err
 		}
 	}
@@ -158,7 +192,7 @@ func (c *ClickhouseDatastore) prepareQueries() {
 		preparedQuery := &preparedQuery{}
 
 		// Create an array of our field names
-		preparedQuery.fields = []string{"date", "time"}
+		preparedQuery.fields = []string{"time"}
 		for fieldName, _ := range typeConfig.Fields {
 			preparedQuery.fields = append(preparedQuery.fields, fieldName)
 		}
@@ -194,10 +228,9 @@ func (c *ClickhouseDatastore) prepare(payload *DatastorePayload) ([]interface{},
 
 	columns := make([]interface{}, len(preparedQuery.fields))
 	columns[0] = payload.Timestamp
-	columns[1] = payload.Timestamp
 
-	for idx, fieldName := range preparedQuery.fields[2:] {
-		columns[idx+2] = payload.ReadDataPath(typeConfig.Fields[fieldName])
+	for idx, fieldName := range preparedQuery.fields[1:] {
+		columns[idx+1] = payload.ReadDataPath(typeConfig.Fields[fieldName])
 	}
 
 	return columns, nil

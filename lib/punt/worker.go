@@ -153,11 +153,9 @@ func (cw *ClusterWorker) run() {
 				}
 			}
 
-			go func() {
-				for _, alert := range typ.Alerts {
-					alert.Run(payload)
-				}
-			}()
+			for _, alert := range typ.Alerts {
+				alert.Run(payload)
+			}
 
 			cw.Cluster.metrics.Incr("msgs.processed", statsTags, 1)
 		case ctrlMsg := <-cw.ctrl:
@@ -165,12 +163,16 @@ func (cw *ClusterWorker) run() {
 				return
 			} else if ctrlMsg == "prune" {
 				for typeName, typeConfig := range cw.Cluster.State.Types {
-					if typeConfig.pruneKeepDuration == time.Duration(0) {
+					if typeConfig.Config.PruneKeep == nil {
 						continue
 					}
 
-					for _, datastore := range cw.datastores {
-						datastore.Prune(typeName, typeConfig.pruneKeepDuration)
+					var err error
+					for _, datastore := range cw.datastoreTypes[typeName] {
+						err = datastore.Prune(typeName, *typeConfig.Config.PruneKeep)
+						if err != nil {
+							log.Printf("ERROR: failed to prune type %v on datastore %v: %v", typeName, datastore, err)
+						}
 					}
 				}
 			}

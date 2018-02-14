@@ -3,7 +3,6 @@ package punt
 import (
 	"context"
 	"log"
-	"time"
 
 	"github.com/mitchellh/mapstructure"
 	"github.com/olivere/elastic"
@@ -94,7 +93,7 @@ func (e *ElasticsearchDatastore) Flush() error {
 	return e.batcher.Flush()
 }
 
-func (e *ElasticsearchDatastore) Prune(typeName string, keepDuration time.Duration) error {
+func (e *ElasticsearchDatastore) Prune(typeName string, keep int) error {
 	return nil
 }
 
