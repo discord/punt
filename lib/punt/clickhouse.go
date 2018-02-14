@@ -13,8 +13,14 @@ import (
 )
 
 var NoConnectionError = errors.New("No clickhouse connection available")
-var InvalidSourceType = errors.New("Invalid source type")
-var InvalidDestType = errors.New("Invalid destination type")
+
+// var InvalidSourceType = errors.New("Invalid source type")
+// var InvalidDestType = errors.New("Invalid destination type")
+
+type preparedQuery struct {
+	query  string
+	fields []string
+}
 
 type ClickhouseConfig struct {
 	URL   string
@@ -24,26 +30,22 @@ type ClickhouseConfig struct {
 
 type ClickhouseTypeConfig struct {
 	Table  string
-	Fields map[string]ClickhouseFieldConfig
-}
-
-type ClickhouseFieldConfig struct {
-	Source string
-	Type   string
+	Fields map[string]string
 }
 
 type ClickhouseDatastore struct {
-	config            *ClickhouseConfig
-	batcher           *DatastoreBatcher
-	db                *sql.DB
-	typeInsertQueries map[string]string
+	config  *ClickhouseConfig
+	batcher *DatastoreBatcher
+	db      *sql.DB
+
+	preparedQueries map[string]*preparedQuery
 }
 
 func NewClickhouseDatastore(config map[string]interface{}) *ClickhouseDatastore {
 	clickhouse := &ClickhouseDatastore{
-		config:            &ClickhouseConfig{},
-		db:                nil,
-		typeInsertQueries: make(map[string]string),
+		config:          &ClickhouseConfig{},
+		db:              nil,
+		preparedQueries: make(map[string]*preparedQuery),
 	}
 
 	mapstructure.Decode(config, clickhouse.config)
@@ -92,12 +94,13 @@ func (c *ClickhouseDatastore) Commit(payloads []*DatastorePayload) error {
 	queries := make(map[string]*sql.Stmt)
 
 	for _, payload := range payloads {
-		if _, exists := c.typeInsertQueries[payload.TypeName]; !exists {
+		preparedQuery := c.preparedQueries[payload.TypeName]
+		if preparedQuery == nil {
 			continue
 		}
 
 		if _, exists = queries[payload.TypeName]; !exists {
-			q, err := tx.Prepare(c.typeInsertQueries[payload.TypeName])
+			q, err := tx.Prepare(preparedQuery.query)
 			if err != nil {
 				return err
 			}
@@ -140,24 +143,28 @@ func (c *ClickhouseDatastore) connect() {
 
 func (c *ClickhouseDatastore) prepareQueries() {
 	for typeName, typeConfig := range c.config.Types {
+		preparedQuery := &preparedQuery{}
+
 		// Create an array of our field names
-		fields := []string{"date", "time"}
+		preparedQuery.fields = []string{"date", "time"}
 		for fieldName, _ := range typeConfig.Fields {
-			fields = append(fields, fieldName)
+			preparedQuery.fields = append(preparedQuery.fields, fieldName)
 		}
 
 		// Create an array of question marks
-		argumentFillers := make([]string, len(fields))
+		argumentFillers := make([]string, len(preparedQuery.fields))
 		for idx, _ := range argumentFillers {
 			argumentFillers[idx] = "?"
 		}
 
-		c.typeInsertQueries[typeName] = fmt.Sprintf(
+		preparedQuery.query = fmt.Sprintf(
 			"INSERT INTO %s (%s) VALUES (%s)",
 			typeConfig.Table,
-			strings.Join(fields, ", "),
+			strings.Join(preparedQuery.fields, ", "),
 			strings.Join(argumentFillers, ", "),
 		)
+
+		c.preparedQueries[typeName] = preparedQuery
 	}
 }
 
@@ -168,94 +175,18 @@ func (c *ClickhouseDatastore) prepare(payload *DatastorePayload) ([]interface{},
 		return nil, nil
 	}
 
-	columns := make([]interface{}, len(typeConfig.Fields)+2)
+	preparedQuery := c.preparedQueries[payload.TypeName]
+	if preparedQuery == nil {
+		return nil, nil
+	}
+
+	columns := make([]interface{}, len(preparedQuery.fields))
 	columns[0] = payload.Timestamp
 	columns[1] = payload.Timestamp
 
-	var err error
-	var converted interface{}
-
-	idx := 0
-	for _, fieldConfig := range typeConfig.Fields {
-		columns[idx+2] = payload.ReadDataPath(fieldConfig.Source)
-
-		if fieldConfig.Type != "" {
-			converted, err = ConvertType(columns[idx+2], fieldConfig.Type)
-			if err != nil {
-				return nil, err
-			}
-
-			columns[idx+2] = converted
-		}
-
-		idx++
+	for idx, fieldName := range preparedQuery.fields[2:] {
+		columns[idx+2] = payload.ReadDataPath(typeConfig.Fields[fieldName])
 	}
 
 	return columns, nil
-}
-
-func ConvertType(value interface{}, destType string) (interface{}, error) {
-	switch value.(type) {
-	case int:
-		return convertTypeFromInt(value.(int), destType)
-	case uint:
-		return convertTypeFromUInt(value.(uint), destType)
-	case float32:
-		return convertTypeFromFloat(float64(value.(float32)), destType)
-	case float64:
-		return convertTypeFromFloat(value.(float64), destType)
-	default:
-		return nil, InvalidSourceType
-	}
-}
-
-func convertTypeFromInt(value int, destType string) (interface{}, error) {
-	switch destType {
-	case "int":
-		return value, nil
-	case "uint":
-		return uint(value), nil
-	case "float32":
-		return float32(value), nil
-	case "float64":
-		return float64(value), nil
-	case "string":
-		return string(value), nil
-	default:
-		return nil, InvalidDestType
-	}
-}
-
-func convertTypeFromFloat(value float64, destType string) (interface{}, error) {
-	switch destType {
-	case "int":
-		return int(value), nil
-	case "uint":
-		return uint(value), nil
-	case "float32":
-		return value, nil
-	case "float64":
-		return value, nil
-	case "string":
-		return fmt.Sprintf("%v", value), nil
-	default:
-		return nil, InvalidDestType
-	}
-}
-
-func convertTypeFromUInt(value uint, destType string) (interface{}, error) {
-	switch destType {
-	case "int":
-		return int(value), nil
-	case "uint":
-		return value, nil
-	case "float32":
-		return float32(value), nil
-	case "float64":
-		return float64(value), nil
-	case "string":
-		return string(value), nil
-	default:
-		return nil, InvalidDestType
-	}
 }

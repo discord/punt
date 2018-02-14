@@ -1,7 +1,0 @@
-- Finish up clickhouse
-  - type casting
-  - error handling
-  - etc?
-- Finish up elasticsearch
-  - index templates
-- Cleanup?

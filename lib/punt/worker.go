@@ -1,18 +1,19 @@
 package punt
 
 import (
+	"errors"
 	"fmt"
 	"log"
-	"sync"
 	"time"
 )
+
+var InvalidResultType = errors.New("InvalidResultType")
+var InvalidSourceType = errors.New("InvalidSourceType")
 
 type ClusterWorker struct {
 	Cluster *Cluster
 
 	datastores []Datastore
-	name       string
-	lock       *sync.RWMutex
 	ctrl       chan string
 }
 
@@ -31,7 +32,6 @@ func NewClusterWorker(cluster *Cluster) *ClusterWorker {
 	return &ClusterWorker{
 		Cluster:    cluster,
 		datastores: datastores,
-		lock:       &sync.RWMutex{},
 		ctrl:       make(chan string, 0),
 	}
 }
@@ -83,12 +83,31 @@ func (cw *ClusterWorker) run() {
 				continue
 			}
 
+			// Apply field type-casts
+			for fieldName, fieldType := range typ.Config.FieldTypes {
+				value, exists := payload[fieldName]
+				if !exists {
+					continue
+				}
+
+				value, err = typeCast(value, fieldType)
+				if err != nil {
+					payload[fieldName] = nil
+
+					if cw.Cluster.Config.Debug {
+						log.Printf("WARNING: failed to convert field %v: %v", fieldName, err)
+					}
+					continue
+				}
+
+				payload[fieldName] = value
+			}
+
 			// Apply all the mutators
 			for _, mutator := range typ.Mutators {
 				mutator.Mutate(payload)
 			}
 
-			// indexString := typ.Config.Prefix + timestamp.Format(typ.Config.DateFormat)
 			payload["@timestamp"] = timestamp.Format("2006-01-02T15:04:05+00:00")
 			payload["punt-server"] = cw.Cluster.hostname
 
@@ -142,4 +161,26 @@ func (cw *ClusterWorker) run() {
 			}
 		}
 	}
+}
+
+func typeCast(value interface{}, resultType string) (interface{}, error) {
+	switch value.(type) {
+	case float32:
+		return typeCastFloat(float64(value.(float32)), resultType)
+	case float64:
+		return typeCastFloat(value.(float64), resultType)
+	}
+	return nil, InvalidSourceType
+}
+
+func typeCastFloat(value float64, resultType string) (interface{}, error) {
+	switch resultType {
+	case "int":
+		return int(value), nil
+	case "uint":
+		return uint(value), nil
+	case "string":
+		return fmt.Sprintf("%f", value), nil
+	}
+	return nil, InvalidResultType
 }

@@ -14,6 +14,7 @@ type TypeConfig struct {
 	Prune    *struct {
 		Hours int `json:"hours"`
 	} `json"prune"`
+	FieldTypes map[string]string `json:"field_types"`
 }
 
 type TypeSubscriber struct {

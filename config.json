@@ -17,6 +17,13 @@
                     "source": "content"
                   }
                 }
+              },
+              "json": {
+                "table": "json",
+                "fields": {
+                  "field1": "field1",
+                  "field2": "field2"
+                }
               }
             }
           }
@@ -31,6 +38,11 @@
                 "prefix": "test-",
                 "dateformat": "2006.01.02.15",
                 "mappingtype": "test"
+              },
+              "json": {
+                "prefix": "json-",
+                "dateformat": "2006.01.02.15",
+                "mappingtype": "json"
               }
             },
             "mappings": {
@@ -41,11 +53,26 @@
                     "index": true
                   }
                 }
+              },
+              "json": {
+                "fields": {
+                  "field1": {
+                    "type": "integer",
+                    "index": true
+                  },
+                  "field2": {
+                    "type": "text",
+                    "index": true
+                  }
+                }
               }
             },
             "templates": {
               "test-*": {
                 "mappings": ["test"]
+              },
+              "json-*": {
+                "mappings": ["json"]
               }
             }
           }
@@ -77,16 +104,19 @@
         "hours": 1
       }
     },
-    "logs": {
+    "json": {
       "transformer": {
-        "name": "direct"
+        "name": "unpack-merge"
+      },
+      "field_types": {
+        "field1": "int"
       }
     }
   },
   "alerts": {
     "magic-word-found": {
       "type": "match",
-      "sources": [],
+      "sources": ["*"],
       "rollup_window": 2,
       "config": {
         "source": "content",

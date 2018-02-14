@@ -104,47 +104,49 @@ func (e *ElasticsearchDatastore) Commit(payloads []*DatastorePayload) error {
 }
 
 func (e *ElasticsearchDatastore) syncIndexTemplates() {
-	// // Sync all the type settings we have
-	// for typeName, typ := range c.State.Types {
-	// 	err := typ.SyncIndexTemplate(client, c.State.Config)
-	// 	if err != nil {
-	// 		log.Printf("  ERROR: failed to sync index template for type %v", typeName)
-	// 	}
-	// }
-	// log.Printf("  successfully synced type index templates")
-	// if t.Config.Template == nil {
-	// 	return nil
-	// }
-	//
-	// templateConfig := t.Config.Template
-	//
-	// settings := make(map[string]interface{})
-	// if templateConfig.NumReplicas != nil {
-	// 	settings["number_of_replicas"] = templateConfig.NumReplicas
-	// }
-	//
-	// if templateConfig.NumShards != nil {
-	// 	settings["number_of_shards"] = templateConfig.NumShards
-	// }
-	//
-	// if templateConfig.RefreshInterval != nil {
-	// 	settings["refresh_interval"] = templateConfig.RefreshInterval
-	// }
-	//
-	// payload := make(map[string]interface{})
-	// payload["template"] = t.Config.Prefix + "*"
-	// payload["settings"] = settings
-	//
-	// mappings := make(map[string]interface{})
-	// for _, mappingName := range templateConfig.Mappings {
-	// 	mappings[mappingName] = config.Mappings[mappingName].GenerateJSON()
-	// }
-	// payload["mappings"] = mappings
-	//
-	// templateService := elastic.NewIndicesPutTemplateService(esClient)
-	// ctx := context.Background()
-	// _, err := templateService.BodyJson(payload).Name(t.Config.Prefix + "template").Do(ctx)
-	// return err
+	// Sync index templates
+	for typeName, typeConfig := range e.config.Types {
+		err := e.syncIndexTemplate(typeName, typeConfig)
+		if err != nil {
+			log.Printf("ERROR: failed to sync index template for type: %v (%v)", typeName, err)
+		}
+	}
+}
+
+func (e *ElasticsearchDatastore) syncIndexTemplate(typeName string, typeConfig ElasticsearchTypeConfig) error {
+	if typeConfig.Template == nil {
+		return nil
+	}
+
+	templateConfig := typeConfig.Template
+
+	settings := make(map[string]interface{})
+	if templateConfig.NumReplicas != nil {
+		settings["number_of_replicas"] = templateConfig.NumReplicas
+	}
+
+	if templateConfig.NumShards != nil {
+		settings["number_of_shards"] = templateConfig.NumShards
+	}
+
+	if templateConfig.RefreshInterval != nil {
+		settings["refresh_interval"] = templateConfig.RefreshInterval
+	}
+
+	payload := make(map[string]interface{})
+	payload["template"] = typeConfig.Prefix + "*"
+	payload["settings"] = settings
+
+	mappings := make(map[string]interface{})
+	for _, mappingName := range templateConfig.Mappings {
+		mappings[mappingName] = e.generateMappingJSON(e.config.Mappings[mappingName])
+	}
+	payload["mappings"] = mappings
+
+	templateService := elastic.NewIndicesPutTemplateService(e.esClient)
+	ctx := context.Background()
+	_, err := templateService.BodyJson(payload).Name(typeConfig.Prefix + "template").Do(ctx)
+	return err
 }
 
 func (e *ElasticsearchDatastore) syncMappings() {
@@ -153,7 +155,7 @@ func (e *ElasticsearchDatastore) syncMappings() {
 	}
 }
 
-func (e *ElasticsearchDatastore) syncMapping(name string, config ElasticsearchMappingConfig) {
+func (e *ElasticsearchDatastore) generateMappingJSON(config ElasticsearchMappingConfig) map[string]interface{} {
 	result := make(map[string]interface{})
 
 	properties := make(map[string]interface{})
@@ -165,7 +167,11 @@ func (e *ElasticsearchDatastore) syncMapping(name string, config ElasticsearchMa
 	}
 
 	result["properties"] = properties
+	return result
+}
 
+func (e *ElasticsearchDatastore) syncMapping(name string, config ElasticsearchMappingConfig) {
+	result := e.generateMappingJSON(config)
 	ctx := context.Background()
 	_, err := e.esClient.PutMapping().Type(name).BodyJson(result).Do(ctx)
 	if err != nil {
