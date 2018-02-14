@@ -13,7 +13,7 @@ type ElasticsearchConfig struct {
 	URL      string
 	Types    map[string]ElasticsearchTypeConfig
 	Mappings map[string]ElasticsearchMappingConfig
-	DatastoreBatcherConfig
+	Batcher  DatastoreBatcherConfig
 }
 
 type ElasticsearchTypeConfig struct {
@@ -52,7 +52,7 @@ func NewElasticsearchDatastore(config map[string]interface{}) *ElasticsearchData
 
 	mapstructure.Decode(config, es.config)
 
-	es.batcher = NewDatastoreBatcher(es, &es.config.DatastoreBatcherConfig)
+	es.batcher = NewDatastoreBatcher(es, &es.config.Batcher)
 	return es
 }
 
@@ -71,6 +71,19 @@ func (e *ElasticsearchDatastore) Initialize() error {
 	log.Printf("    synced index templates")
 
 	return nil
+}
+
+func (e ElasticsearchDatastore) GetSubscribedTypes() []string {
+	if len(e.config.Types) == 0 {
+		return nil
+	}
+
+	result := []string{}
+	for typeName, _ := range e.config.Types {
+		result = append(result, typeName)
+	}
+
+	return result
 }
 
 func (e *ElasticsearchDatastore) Write(payload *DatastorePayload) error {

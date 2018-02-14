@@ -23,9 +23,9 @@ type preparedQuery struct {
 }
 
 type ClickhouseConfig struct {
-	URL   string
-	Types map[string]ClickhouseTypeConfig
-	DatastoreBatcherConfig
+	URL     string
+	Types   map[string]ClickhouseTypeConfig
+	Batcher DatastoreBatcherConfig
 }
 
 type ClickhouseTypeConfig struct {
@@ -54,12 +54,24 @@ func NewClickhouseDatastore(config map[string]interface{}) *ClickhouseDatastore 
 }
 
 func (c *ClickhouseDatastore) Initialize() error {
-	c.batcher = NewDatastoreBatcher(c, &c.config.DatastoreBatcherConfig)
+	c.batcher = NewDatastoreBatcher(c, &c.config.Batcher)
 	c.connect()
 	log.Printf("    connection to clickhouse opened")
 	c.prepareQueries()
 	log.Printf("    prepared all clickhouse queries")
 	return nil
+}
+
+func (c *ClickhouseDatastore) GetSubscribedTypes() []string {
+	if len(c.config.Types) == 0 {
+		return nil
+	}
+
+	result := []string{}
+	for typeName, _ := range c.config.Types {
+		result = append(result, typeName)
+	}
+	return result
 }
 
 func (c *ClickhouseDatastore) Write(payload *DatastorePayload) error {

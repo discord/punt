@@ -13,11 +13,13 @@ var InvalidSourceType = errors.New("InvalidSourceType")
 type ClusterWorker struct {
 	Cluster *Cluster
 
-	datastores []Datastore
-	ctrl       chan string
+	datastores     []Datastore
+	datastoreTypes map[string][]Datastore
+	ctrl           chan string
 }
 
 func NewClusterWorker(cluster *Cluster) *ClusterWorker {
+	datastoreTypes := make(map[string][]Datastore)
 	datastores := make([]Datastore, 0)
 
 	for datastoreName, datastore := range cluster.Config.Datastores {
@@ -26,13 +28,28 @@ func NewClusterWorker(cluster *Cluster) *ClusterWorker {
 		datastoreConfig := datastore.(map[string]interface{})["config"].(map[string]interface{})
 		datastore := CreateDatastore(datastoreType, datastoreConfig)
 		datastore.Initialize()
+
 		datastores = append(datastores, datastore)
+
+		subscribedTypes := datastore.GetSubscribedTypes()
+		if subscribedTypes == nil {
+			continue
+		}
+
+		for _, typeName := range subscribedTypes {
+			if _, exists := datastoreTypes[typeName]; !exists {
+				datastoreTypes[typeName] = make([]Datastore, 0)
+			}
+
+			datastoreTypes[typeName] = append(datastoreTypes[typeName], datastore)
+		}
 	}
 
 	return &ClusterWorker{
-		Cluster:    cluster,
-		datastores: datastores,
-		ctrl:       make(chan string, 0),
+		Cluster:        cluster,
+		datastores:     datastores,
+		datastoreTypes: datastoreTypes,
+		ctrl:           make(chan string, 0),
 	}
 }
 
@@ -124,7 +141,7 @@ func (cw *ClusterWorker) run() {
 				Timestamp: timestamp,
 				Data:      payload,
 			}
-			for _, datastore := range cw.datastores {
+			for _, datastore := range cw.datastoreTypes[tag] {
 				datastore.Write(datastorePayload)
 			}
 
@@ -136,9 +153,11 @@ func (cw *ClusterWorker) run() {
 				}
 			}
 
-			for _, alert := range typ.Alerts {
-				alert.Run(payload)
-			}
+			go func() {
+				for _, alert := range typ.Alerts {
+					alert.Run(payload)
+				}
+			}()
 
 			cw.Cluster.metrics.Incr("msgs.processed", statsTags, 1)
 		case ctrlMsg := <-cw.ctrl:

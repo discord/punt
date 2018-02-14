@@ -6,9 +6,12 @@
           "type": "clickhouse",
           "config": {
             "url": "tcp://127.0.0.1:9000",
-            "batchsize": 1,
-            "maxretries": 3,
-            "backoff": 1000,
+            "batcher": {
+              "batchsize": 1,
+              "maxretries": 3,
+              "backoff": 1000,
+              "maxconcurrentcommits": 12
+            },
             "types": {
               "*": {
                 "table": "test",
@@ -32,7 +35,12 @@
           "type": "elasticsearch",
           "config": {
             "url": "http://localhost:9200",
-            "batchsize": 1,
+            "batcher": {
+              "batchsize": 1,
+              "maxretries": 3,
+              "backoff": 1000,
+              "maxconcurrentcommits": 12
+            },
             "types": {
               "*": {
                 "prefix": "test-",

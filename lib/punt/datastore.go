@@ -43,6 +43,11 @@ type Datastore interface {
 
 	// Called periodically to delete old data.
 	Prune(string, time.Duration) error
+
+	// Returns a list of all types this datastore cares about. If the list is empty
+	//  the datastore will recieve payloads for all types. If it's nil the datastore
+	//  wil recieve no payloads.
+	GetSubscribedTypes() []string
 }
 
 type DatastoreBatcherDestination interface {
