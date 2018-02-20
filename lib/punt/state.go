@@ -22,6 +22,8 @@ func NewState(config *Config) *State {
 		Exit:     make(chan bool),
 	}
 
+	go RunRuntimeCollector()
+
 	for name, cluster := range config.Clusters {
 		state.Clusters[name] = NewCluster(&state, name, cluster)
 	}
