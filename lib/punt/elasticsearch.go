@@ -3,6 +3,7 @@ package punt
 import (
 	"context"
 	"log"
+	"sort"
 
 	"github.com/mitchellh/mapstructure"
 	"github.com/olivere/elastic"
@@ -94,6 +95,44 @@ func (e *ElasticsearchDatastore) Flush() error {
 }
 
 func (e *ElasticsearchDatastore) Prune(typeName string, keep int) error {
+	typeConfig := e.config.Types[typeName]
+
+	ctx := context.Background()
+	indexes, err := elastic.NewIndicesGetService(e.esClient).Index(typeConfig.Prefix + "*").Do(ctx)
+
+	if err != nil {
+		return err
+	}
+
+	if len(indexes) <= keep {
+		return nil
+	}
+
+	sortedIndexNames := make([]string, 0)
+	for key, _ := range indexes {
+		sortedIndexNames = append(sortedIndexNames, key)
+	}
+	sort.Strings(sortedIndexNames)
+
+	toDelete := sortedIndexNames[:len(sortedIndexNames)-keep]
+
+	var toDeleteBuff []string
+	for len(toDelete) > 0 {
+		if len(toDelete) > 25 {
+			toDeleteBuff = toDelete[:25]
+			toDelete = toDelete[25:]
+		} else {
+			toDeleteBuff = toDelete
+			toDelete = make([]string, 0)
+		}
+
+		log.Printf("Deleting the following indexes for `%v`: %v", typeName, toDeleteBuff)
+		_, err = elastic.NewIndicesDeleteService(e.esClient).Index(toDeleteBuff).Do(ctx)
+		if err != nil {
+			log.Printf("ERROR: failed to delete indexes (%v): %v", toDeleteBuff, err)
+		}
+	}
+
 	return nil
 }
 
