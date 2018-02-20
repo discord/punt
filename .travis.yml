@@ -5,6 +5,7 @@ go:
 script:
   - go get github.com/stretchr/testify/assert
   - go test -v github.com/discordapp/punt/lib/syslog
+  - go test -v github.com/discordapp/punt/lib/punt/datastore
 
 install:
   - go get github.com/discordapp/punt/cmd/puntd

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"time"
+
+	"github.com/discordapp/punt/lib/punt/datastore"
 )
 
 var InvalidResultType = errors.New("InvalidResultType")
@@ -13,35 +15,35 @@ var InvalidSourceType = errors.New("InvalidSourceType")
 type ClusterWorker struct {
 	Cluster *Cluster
 
-	datastores     []Datastore
-	datastoreTypes map[string][]Datastore
+	datastores     []datastore.Datastore
+	datastoreTypes map[string][]datastore.Datastore
 	ctrl           chan string
 }
 
 func NewClusterWorker(cluster *Cluster) *ClusterWorker {
-	datastoreTypes := make(map[string][]Datastore)
-	datastores := make([]Datastore, 0)
+	datastoreTypes := make(map[string][]datastore.Datastore)
+	datastores := make([]datastore.Datastore, 0)
 
-	for datastoreName, datastore := range cluster.Config.Datastores {
+	for datastoreName, datastoreConfigRaw := range cluster.Config.Datastores {
 		log.Printf("  intializing datastore %s", datastoreName)
-		datastoreType := datastore.(map[string]interface{})["type"].(string)
-		datastoreConfig := datastore.(map[string]interface{})["config"].(map[string]interface{})
-		datastore := CreateDatastore(datastoreType, datastoreConfig)
-		datastore.Initialize()
+		datastoreType := datastoreConfigRaw.(map[string]interface{})["type"].(string)
+		datastoreConfig := datastoreConfigRaw.(map[string]interface{})["config"].(map[string]interface{})
+		ds := datastore.CreateDatastore(datastoreType, datastoreConfig)
+		ds.Initialize()
 
-		datastores = append(datastores, datastore)
+		datastores = append(datastores, ds)
 
-		subscribedTypes := datastore.GetSubscribedTypes()
+		subscribedTypes := ds.GetSubscribedTypes()
 		if subscribedTypes == nil {
 			continue
 		}
 
 		for _, typeName := range subscribedTypes {
 			if _, exists := datastoreTypes[typeName]; !exists {
-				datastoreTypes[typeName] = make([]Datastore, 0)
+				datastoreTypes[typeName] = make([]datastore.Datastore, 0)
 			}
 
-			datastoreTypes[typeName] = append(datastoreTypes[typeName], datastore)
+			datastoreTypes[typeName] = append(datastoreTypes[typeName], ds)
 		}
 	}
 
@@ -136,13 +138,13 @@ func (cw *ClusterWorker) run() {
 			}
 
 			// Create a datastore payload and submit it to all our downstream datastores.
-			datastorePayload := &DatastorePayload{
+			datastorePayload := &datastore.DatastorePayload{
 				TypeName:  tag,
 				Timestamp: timestamp,
 				Data:      payload,
 			}
-			for _, datastore := range cw.datastoreTypes[tag] {
-				datastore.Write(datastorePayload)
+			for _, ds := range cw.datastoreTypes[tag] {
+				ds.Write(datastorePayload)
 			}
 
 			// Distribute the message to all subscribers, using non-blocking send
@@ -168,17 +170,17 @@ func (cw *ClusterWorker) run() {
 					}
 
 					var err error
-					for _, datastore := range cw.datastoreTypes[typeName] {
-						err = datastore.Prune(typeName, *typeConfig.Config.PruneKeep)
+					for _, ds := range cw.datastoreTypes[typeName] {
+						err = ds.Prune(typeName, *typeConfig.Config.PruneKeep)
 						if err != nil {
-							log.Printf("ERROR: failed to prune type %v on datastore %v: %v", typeName, datastore, err)
+							log.Printf("ERROR: failed to prune type %v on datastore %v: %v", typeName, ds, err)
 						}
 					}
 				}
 			}
 		case <-ticker.C:
-			for _, datastore := range cw.datastores {
-				datastore.Flush()
+			for _, ds := range cw.datastores {
+				ds.Flush()
 			}
 		}
 	}
