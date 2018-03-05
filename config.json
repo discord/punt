@@ -39,7 +39,8 @@
               "batchsize": 1,
               "maxretries": 3,
               "backoff": 1000,
-              "maxconcurrentcommits": 12
+              "maxconcurrentcommits": 12,
+              "drop": true
             },
             "types": {
               "*": {
@@ -74,14 +75,6 @@
                   }
                 }
               }
-            },
-            "templates": {
-              "test-*": {
-                "mappings": ["test"]
-              },
-              "json-*": {
-                "mappings": ["json"]
-              }
             }
           }
         }
@@ -108,9 +101,7 @@
       "transformer": {
         "name": "direct"
       },
-      "prune": {
-        "hours": 1
-      }
+      "prune": 1
     },
     "json": {
       "transformer": {

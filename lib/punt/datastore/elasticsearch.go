@@ -2,9 +2,11 @@ package datastore
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"sort"
 
+	"github.com/DataDog/datadog-go/statsd"
 	"github.com/mitchellh/mapstructure"
 	"github.com/olivere/elastic"
 )
@@ -43,6 +45,8 @@ type ElasticsearchDatastore struct {
 	config   *ElasticsearchConfig
 	esClient *elastic.Client
 	batcher  *DatastoreBatcher
+	metrics  *statsd.Client
+	tags     []string
 }
 
 func NewElasticsearchDatastore(config map[string]interface{}) *ElasticsearchDatastore {
@@ -52,11 +56,14 @@ func NewElasticsearchDatastore(config map[string]interface{}) *ElasticsearchData
 
 	mapstructure.Decode(config, es.config)
 
-	es.batcher = NewDatastoreBatcher(es, &es.config.Batcher)
 	return es
 }
 
-func (e *ElasticsearchDatastore) Initialize() error {
+func (e *ElasticsearchDatastore) Initialize(name string, metrics *statsd.Client) error {
+	e.batcher = NewDatastoreBatcher(e, &e.config.Batcher, name, metrics)
+	e.metrics = metrics
+	e.tags = []string{fmt.Sprintf("datastore:%s", name)}
+
 	client, err := elastic.NewClient(elastic.SetURL(e.config.URL))
 	if err != nil {
 		return err
@@ -136,21 +143,22 @@ func (e *ElasticsearchDatastore) Prune(typeName string, keep int) error {
 	return nil
 }
 
-func (e *ElasticsearchDatastore) Commit(payloads []*DatastorePayload) error {
+func (e *ElasticsearchDatastore) Commit(typeName string, payloads []*DatastorePayload) error {
 	bulk := e.esClient.Bulk()
 
-	var typeConfig ElasticsearchTypeConfig
 	var indexString string
+	typeConfig := e.config.Types[typeName]
 
 	for _, payload := range payloads {
-		typeConfig = e.config.Types[payload.TypeName]
-
 		indexString = typeConfig.Prefix + payload.Timestamp.Format(typeConfig.DateFormat)
 		bulk.Add(elastic.NewBulkIndexRequest().Index(indexString).Type(typeConfig.MappingType).Doc(payload.Data))
 	}
 
 	ctx := context.Background()
 	_, err := bulk.Do(ctx)
+	if err == nil {
+		e.metrics.Count("msgs.commited", int64(len(payloads)), e.tags, 1)
+	}
 	return err
 }
 

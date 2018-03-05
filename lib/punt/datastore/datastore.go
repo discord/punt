@@ -1,10 +1,46 @@
 package datastore
 
 import (
+	"errors"
+	"fmt"
 	"log"
 	"strings"
 	"time"
+
+	"github.com/DataDog/datadog-go/statsd"
 )
+
+var DroppedError error = errors.New("Dropped due to commit issue")
+
+func WriteDataPath(data interface{}, path string, value interface{}) bool {
+	var current interface{} = data
+	var exists bool
+
+	parts := strings.Split(path, ".")
+	for _, key := range parts[:len(parts)-1] {
+		current, exists = current.(map[string]interface{})[key]
+		if !exists {
+			return false
+		}
+	}
+
+	current.(map[string]interface{})[parts[len(parts)-1]] = value
+	return true
+}
+
+func ReadDataPath(data interface{}, path string) (interface{}, bool) {
+	var current interface{} = data
+	var exists bool
+
+	for _, key := range strings.Split(path, ".") {
+		current, exists = current.(map[string]interface{})[key]
+		if !exists {
+			return nil, false
+		}
+	}
+
+	return current, true
+}
 
 type DatastorePayload struct {
 	TypeName  string
@@ -12,15 +48,8 @@ type DatastorePayload struct {
 	Data      map[string]interface{}
 }
 
-func (dp *DatastorePayload) ReadDataPath(path string) interface{} {
-	var current interface{}
-	current = dp.Data
-
-	for _, key := range strings.Split(path, ".") {
-		current = current.(map[string]interface{})[key]
-	}
-
-	return current
+func (dp *DatastorePayload) ReadDataPath(path string) (interface{}, bool) {
+	return ReadDataPath(dp.Data, path)
 }
 
 // A datastore abstracts away the implementation details of a backing store for
@@ -31,7 +60,7 @@ func (dp *DatastorePayload) ReadDataPath(path string) interface{} {
 type Datastore interface {
 	// Called when the cluster worker starts up, should be used to initialize
 	//  any external/database connections.
-	Initialize() error
+	Initialize(string, *statsd.Client) error
 
 	// Called to write a single log line to the datastore. Errors returned are logged
 	//  but do not effect any other operations.
@@ -51,7 +80,7 @@ type Datastore interface {
 }
 
 type DatastoreBatcherDestination interface {
-	Commit([]*DatastorePayload) error
+	Commit(string, []*DatastorePayload) error
 }
 
 type DatastoreBatcherConfig struct {
@@ -59,18 +88,21 @@ type DatastoreBatcherConfig struct {
 	MaxRetries           int
 	Backoff              int
 	MaxConcurrentCommits int
+	Drop                 bool
 }
 
 // A batcher utilty for datastores
 type DatastoreBatcher struct {
 	config            *DatastoreBatcherConfig
 	dest              DatastoreBatcherDestination
-	bufferLength      int
-	buffer            []*DatastorePayload
+	bufferLengths     map[string]int
+	buffers           map[string][]*DatastorePayload
 	concurrentCommits chan int8
+	metrics           *statsd.Client
+	tags              []string
 }
 
-func NewDatastoreBatcher(dest DatastoreBatcherDestination, config *DatastoreBatcherConfig) *DatastoreBatcher {
+func NewDatastoreBatcher(dest DatastoreBatcherDestination, config *DatastoreBatcherConfig, name string, metrics *statsd.Client) *DatastoreBatcher {
 	if config.BatchSize <= 0 {
 		log.Printf("WARNING: batchSize <= 0, setting to default of 1")
 		config.BatchSize = 1
@@ -84,48 +116,79 @@ func NewDatastoreBatcher(dest DatastoreBatcherDestination, config *DatastoreBatc
 	return &DatastoreBatcher{
 		config:            config,
 		dest:              dest,
-		bufferLength:      0,
-		buffer:            nil,
+		bufferLengths:     make(map[string]int),
+		buffers:           make(map[string][]*DatastorePayload),
 		concurrentCommits: make(chan int8, config.MaxConcurrentCommits),
+		metrics:           metrics,
+		tags:              []string{fmt.Sprintf("datastore:%s", name)},
 	}
 }
 
 func (db *DatastoreBatcher) Write(payload *DatastorePayload) error {
-	if db.buffer == nil {
-		db.buffer = make([]*DatastorePayload, db.config.BatchSize)
+	if buffer := db.buffers[payload.TypeName]; buffer == nil {
+		db.buffers[payload.TypeName] = make([]*DatastorePayload, db.config.BatchSize)
+		db.bufferLengths[payload.TypeName] = 0
 	}
 
-	db.buffer[db.bufferLength] = payload
-	db.bufferLength++
+	length := db.bufferLengths[payload.TypeName]
+	db.buffers[payload.TypeName][length] = payload
+	db.bufferLengths[payload.TypeName] = length + 1
 
 	// If the buffer is at our batch size, flush it
-	if db.bufferLength >= db.config.BatchSize {
-		db.Flush()
+	if length+1 >= db.config.BatchSize {
+		return db.flush(payload.TypeName)
 	}
 
 	return nil
 }
 
 func (db *DatastoreBatcher) Flush() error {
-	if db.bufferLength == 0 {
-		return nil
+	for typeName, buffer := range db.buffers {
+		if buffer == nil {
+			continue
+		}
+
+		err := db.flush(typeName)
+		if err != nil {
+			return err
+		}
 	}
-
-	// Take a local copy to the buffer
-	buffer := db.buffer[:db.bufferLength]
-
-	// Clear out the stored buffer / length
-	db.buffer = nil
-	db.bufferLength = 0
-
-	// Run the commit function in a goroutine
-	db.concurrentCommits <- 1
-	go db.commit(buffer)
 
 	return nil
 }
 
-func (db *DatastoreBatcher) commit(buffer []*DatastorePayload) {
+func (db *DatastoreBatcher) flush(typeName string) error {
+	if db.bufferLengths[typeName] == 0 {
+		return nil
+	}
+
+	// Take a local copy to the buffer
+	length := db.bufferLengths[typeName]
+	buffer := db.buffers[typeName][:length]
+
+	// Clear out the stored buffer / length
+	db.buffers[typeName] = nil
+	db.bufferLengths[typeName] = 0
+
+	// If we're in "drop" mode, do a non blocking commit
+	if db.config.Drop {
+		select {
+		case db.concurrentCommits <- 1:
+			// Run the commit function in a goroutine
+			go db.commit(typeName, buffer)
+			return nil
+		default:
+			db.metrics.Count("msgs.dropped", int64(len(buffer)), append(db.tags, "reason:backoff"), 1)
+			return DroppedError
+		}
+	} else {
+		db.concurrentCommits <- 1
+		go db.commit(typeName, buffer)
+		return nil
+	}
+}
+
+func (db *DatastoreBatcher) commit(typeName string, buffer []*DatastorePayload) {
 	var err error
 
 	// Clear our concurrent commit semaphore
@@ -136,10 +199,12 @@ func (db *DatastoreBatcher) commit(buffer []*DatastorePayload) {
 	retries := db.config.MaxRetries
 
 	for {
-		err = db.dest.Commit(buffer)
+		err = db.dest.Commit(typeName, buffer)
 		if err == nil {
 			return
 		}
+
+		db.metrics.Incr("datastore.errors", db.tags, 1)
 
 		if retries <= 0 {
 			break
@@ -149,6 +214,7 @@ func (db *DatastoreBatcher) commit(buffer []*DatastorePayload) {
 		retries--
 	}
 
+	db.metrics.Count("msgs.dropped", int64(len(buffer)), append(db.tags, "reason:datastore_error"), 1)
 	log.Printf("FAILED: DatastoreBatcher failed to commit: %v", err)
 }
 

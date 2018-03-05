@@ -7,6 +7,7 @@ import (
 	"log"
 	"strings"
 
+	"github.com/DataDog/datadog-go/statsd"
 	"github.com/kshvakov/clickhouse"
 	"github.com/mitchellh/mapstructure"
 )
@@ -34,6 +35,8 @@ type ClickhouseDatastore struct {
 	config  *ClickhouseConfig
 	batcher *DatastoreBatcher
 	db      *sql.DB
+	metrics *statsd.Client
+	tags    []string
 
 	preparedQueries map[string]*preparedQuery
 }
@@ -50,8 +53,12 @@ func NewClickhouseDatastore(config map[string]interface{}) *ClickhouseDatastore 
 	return clickhouse
 }
 
-func (c *ClickhouseDatastore) Initialize() error {
-	c.batcher = NewDatastoreBatcher(c, &c.config.Batcher)
+func (c *ClickhouseDatastore) Initialize(name string, metrics *statsd.Client) error {
+	c.metrics = metrics
+	c.tags = []string{fmt.Sprintf("datastore:%s", name)}
+
+	c.batcher = NewDatastoreBatcher(c, &c.config.Batcher, name, metrics)
+
 	c.connect()
 	log.Printf("    connection to clickhouse opened")
 	c.prepareQueries()
@@ -108,6 +115,10 @@ func (c *ClickhouseDatastore) Prune(typeName string, keep int) error {
 		partitions = append(partitions, partition)
 	}
 
+	if len(partitions) == 0 {
+		return nil
+	}
+
 	toDelete := partitions[:len(partitions)-keep]
 	for _, partition = range toDelete {
 		_, err = c.db.Exec(fmt.Sprintf("ALTER TABLE %s DROP PARTITION %s", typeConfig.Table, partition))
@@ -119,7 +130,7 @@ func (c *ClickhouseDatastore) Prune(typeName string, keep int) error {
 	return nil
 }
 
-func (c *ClickhouseDatastore) Commit(payloads []*DatastorePayload) error {
+func (c *ClickhouseDatastore) Commit(typeName string, payloads []*DatastorePayload) error {
 	if c.db == nil {
 		c.connect()
 		if c.db == nil {
@@ -134,25 +145,17 @@ func (c *ClickhouseDatastore) Commit(payloads []*DatastorePayload) error {
 		return err
 	}
 
-	var exists bool
-	var query *sql.Stmt
-	queries := make(map[string]*sql.Stmt)
+	preparedQuery := c.preparedQueries[typeName]
+	if preparedQuery == nil {
+		return nil
+	}
+
+	query, err := tx.Prepare(preparedQuery.query)
+	if err != nil {
+		return err
+	}
 
 	for _, payload := range payloads {
-		preparedQuery := c.preparedQueries[payload.TypeName]
-		if preparedQuery == nil {
-			continue
-		}
-
-		if _, exists = queries[payload.TypeName]; !exists {
-			q, err := tx.Prepare(preparedQuery.query)
-			if err != nil {
-				return err
-			}
-			queries[payload.TypeName] = q
-		}
-
-		query = queries[payload.TypeName]
 		row, err := c.prepare(payload)
 		if err != nil {
 			return err
@@ -165,6 +168,7 @@ func (c *ClickhouseDatastore) Commit(payloads []*DatastorePayload) error {
 		}
 	}
 
+	c.metrics.Count("msgs.commited", int64(len(payloads)), c.tags, 1)
 	return tx.Commit()
 }
 
@@ -230,7 +234,7 @@ func (c *ClickhouseDatastore) prepare(payload *DatastorePayload) ([]interface{},
 	columns[0] = payload.Timestamp
 
 	for idx, fieldName := range preparedQuery.fields[1:] {
-		columns[idx+1] = payload.ReadDataPath(typeConfig.Fields[fieldName])
+		columns[idx+1], _ = payload.ReadDataPath(typeConfig.Fields[fieldName])
 	}
 
 	return columns, nil

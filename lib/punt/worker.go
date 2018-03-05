@@ -18,6 +18,7 @@ type ClusterWorker struct {
 	datastores     []datastore.Datastore
 	datastoreTypes map[string][]datastore.Datastore
 	ctrl           chan string
+	pruneLock      chan bool
 }
 
 func NewClusterWorker(cluster *Cluster) *ClusterWorker {
@@ -29,7 +30,7 @@ func NewClusterWorker(cluster *Cluster) *ClusterWorker {
 		datastoreType := datastoreConfigRaw.(map[string]interface{})["type"].(string)
 		datastoreConfig := datastoreConfigRaw.(map[string]interface{})["config"].(map[string]interface{})
 		ds := datastore.CreateDatastore(datastoreType, datastoreConfig)
-		ds.Initialize()
+		ds.Initialize(datastoreName, cluster.metrics)
 
 		datastores = append(datastores, ds)
 
@@ -52,6 +53,7 @@ func NewClusterWorker(cluster *Cluster) *ClusterWorker {
 		datastores:     datastores,
 		datastoreTypes: datastoreTypes,
 		ctrl:           make(chan string, 0),
+		pruneLock:      make(chan bool, 1),
 	}
 }
 
@@ -104,14 +106,14 @@ func (cw *ClusterWorker) run() {
 
 			// Apply field type-casts
 			for fieldName, fieldType := range typ.Config.FieldTypes {
-				value, exists := payload[fieldName]
+				value, exists := datastore.ReadDataPath(payload, fieldName)
 				if !exists {
 					continue
 				}
 
 				value, err = typeCast(value, fieldType)
 				if err != nil {
-					payload[fieldName] = nil
+					datastore.WriteDataPath(payload, fieldName, nil)
 
 					if cw.Cluster.Config.Debug {
 						log.Printf("WARNING: failed to convert field %v: %v", fieldName, err)
@@ -119,7 +121,7 @@ func (cw *ClusterWorker) run() {
 					continue
 				}
 
-				payload[fieldName] = value
+				datastore.WriteDataPath(payload, fieldName, value)
 			}
 
 			// Apply all the mutators
@@ -164,18 +166,11 @@ func (cw *ClusterWorker) run() {
 			if ctrlMsg == "exit" {
 				return
 			} else if ctrlMsg == "prune" {
-				for typeName, typeConfig := range cw.Cluster.State.Types {
-					if typeConfig.Config.PruneKeep == nil {
-						continue
-					}
-
-					var err error
-					for _, ds := range cw.datastoreTypes[typeName] {
-						err = ds.Prune(typeName, *typeConfig.Config.PruneKeep)
-						if err != nil {
-							log.Printf("ERROR: failed to prune type %v on datastore %v: %v", typeName, ds, err)
-						}
-					}
+				select {
+				case cw.pruneLock <- true:
+					go cw.prune()
+				default:
+					return
 				}
 			}
 		case <-ticker.C:
@@ -184,6 +179,25 @@ func (cw *ClusterWorker) run() {
 			}
 		}
 	}
+}
+
+func (cw *ClusterWorker) prune() {
+	for typeName, typeConfig := range cw.Cluster.State.Types {
+		if typeConfig.Config.PruneKeep == nil {
+			continue
+		}
+
+		var err error
+		for _, ds := range cw.datastoreTypes[typeName] {
+			err = ds.Prune(typeName, *typeConfig.Config.PruneKeep)
+			if err != nil {
+				log.Printf("ERROR: failed to prune type %v on datastore %v: %v", typeName, ds, err)
+				log.Printf("pruned %s", typeName)
+			}
+		}
+	}
+
+	<-cw.pruneLock
 }
 
 func typeCast(value interface{}, resultType string) (interface{}, error) {

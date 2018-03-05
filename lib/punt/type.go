@@ -10,7 +10,7 @@ type TypeConfig struct {
 		Config map[string]interface{} `json:"config"`
 	} `json:"transformer"`
 	Mutators   []map[string]interface{} `json:"mutators"`
-	PruneKeep  *int                     `json"prune_keep"`
+	PruneKeep  *int                     `json:"prune"`
 	FieldTypes map[string]string        `json:"field_types"`
 }
 

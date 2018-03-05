@@ -30,6 +30,7 @@ type ClusterConfig struct {
 	BufferSize    int                    `json:"buffer_size"`
 	FlushInterval int                    `json:"flush_interval"`
 	Debug         bool                   `json:"debug"`
+	Prune         bool                   `json:"prune"`
 }
 
 type Cluster struct {
@@ -77,7 +78,9 @@ func (c *Cluster) Run() error {
 	log.Printf("  completed startup")
 
 	// Spawn the prune goroutine
-	go c.pruneLoop()
+	if c.Config.Prune {
+		go c.pruneLoop()
+	}
 	log.Printf("  successfully started prune worker")
 
 	return nil
