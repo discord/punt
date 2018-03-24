@@ -10,6 +10,7 @@ import (
 
 	"github.com/DataDog/datadog-go/statsd"
 	"github.com/discordapp/punt/lib/syslog"
+	"github.com/discordapp/punt/lib/kafka"
 	"github.com/olivere/elastic"
 )
 
@@ -19,6 +20,8 @@ type ClusterServerConfig struct {
 	OctetCounted bool   `json:"octet_counted"`
 	CertFile     string `json:"tls_cert_file"`
 	KeyFile      string `json:"tls_key_file"`
+	FreightTopic string `json:"freight_topic"`
+	Address      string `json:"address"`
 }
 
 type ClusterConfig struct {
@@ -96,11 +99,20 @@ func (c *Cluster) spawnWorkers() {
 func (c *Cluster) spawnServers() {
 	for idx := range c.Config.Servers {
 		serverConfig := c.Config.Servers[idx]
-		c.startServer(serverConfig)
+		switch t := serverConfig.Type; t {
+		case "tcp":
+			fallthrough
+		case "udp":
+			c.startSyslogServer(serverConfig)
+		case "kafka":
+			c.startKafkaServer(serverConfig)
+		default:
+			log.Printf("Failed to start server: %v", t)
+		}
 	}
 }
 
-func (c *Cluster) startServer(config ClusterServerConfig) {
+func (c *Cluster) startSyslogServer(config ClusterServerConfig) {
 	var syslogServer *syslog.Server
 
 	errors := make(chan syslog.InvalidMessage)
@@ -168,7 +180,19 @@ func (c *Cluster) startServer(config ClusterServerConfig) {
 		log.Panicf("Failed to bind: %v", err)
 	}
 
-	log.Printf("  successfully started server %v:%v", config.Type, config.Bind)
+	log.Printf("  successfully started syslog server %v:%v", config.Type, config.Bind)
+}
+
+func (c *Cluster) startKafkaServer(config ClusterServerConfig) {
+	 serverConfig := kafka.ServerConfig{
+                FreightTopic: config.FreightTopic,
+                Address: config.Address,
+        }
+	var kafkaServer *kafka.Server
+	kafkaServer = kafka.NewServer(serverConfig, c.messages)
+        kafkaServer.Start()
+
+	log.Printf("  successfully started kafka server: %v with topic: %v", config.Address, config.FreightTopic)
 }
 
 func (c *Cluster) pruneLoop() {
