@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/DataDog/datadog-go/statsd"
-	"github.com/discordapp/punt/lib/syslog"
 	"github.com/discordapp/punt/lib/kafka"
+	"github.com/discordapp/punt/lib/syslog"
 	"github.com/olivere/elastic"
 )
 
@@ -64,7 +64,7 @@ func NewCluster(state *State, name string, config ClusterConfig) *Cluster {
 		Incoming: make(chan *elastic.BulkIndexRequest),
 		metrics:  NewStatsdClient("punt", []string{fmt.Sprintf("cluster-name:%s", name)}),
 		messages: make(chan syslog.SyslogData, config.BufferSize),
-                errors:   make(chan syslog.InvalidMessage),
+		errors:   make(chan syslog.InvalidMessage),
 		hostname: name,
 		exit:     make(chan bool),
 		workers:  make([]*ClusterWorker, 0),
@@ -171,19 +171,21 @@ func (c *Cluster) startSyslogServer(config ClusterServerConfig) {
 		log.Panicf("Failed to bind: %v", err)
 	}
 
-	log.Printf("  successfully started syslog server %v:%v", config.Type, config.Bind)
+	log.Printf("  successfully started syslog server %v:%v",
+		config.Type, config.Bind)
 }
 
 func (c *Cluster) startKafkaServer(config ClusterServerConfig) {
-	 serverConfig := kafka.ServerConfig{
-                Topic: config.Topic,
-                Address: config.Address,
-        }
-	var kafkaServer *kafka.Server
-	kafkaServer = kafka.NewServer(serverConfig, c.messages, c.errors)
-        kafkaServer.Start()
+	serverConfig := kafka.ServerConfig{
+		Topic:   config.Topic,
+		Address: config.Address,
+	}
 
-	log.Printf("  successfully started kafka server: %v with topic: %v", config.Address, config.Topic)
+	kafkaServer := kafka.NewServer(serverConfig, c.messages, c.errors)
+	kafkaServer.Start()
+
+	log.Printf("  successfully started kafka server: %v with topic: %v",
+		config.Address, config.Topic)
 }
 
 func (c *Cluster) pruneLoop() {
