@@ -3,6 +3,7 @@ package kafka
 import (
 	"encoding/json"
 	"time"
+	"log"
 
 	"github.com/zorkian/kafka"
 	"github.com/discordapp/punt/lib/syslog"
@@ -10,45 +11,21 @@ import (
 
 type Server struct {
 	Messages chan syslog.SyslogData
+	Errors chan syslog.InvalidMessage
 	Broker* kafka.Broker
-	FreightTopic string
+	Topic string
 }
 
 type ServerConfig struct {
-	FreightTopic string 
+	Topic string 
 	Address string
 }
 
-type AudioMetrics struct {
+type Timestamp struct {
 	Timestamp int64 `json:"timestamp"`
-	MediaSessionID string `json:"media_session_id"`
-	User struct {
-		Rtt interface{} `json:"rtt"`
-		Protocol interface{} `json:"protocol"`
-		ID string `json:"id"`
-		AudioInbound struct {
-			PacketsLost int `json:"packets_lost"`
-			Ssrc int `json:"ssrc"`
-			Jitter int `json:"jitter"`
-			PacketsReceived int `json:"packets_received"`
-			AudioLevel float64 `json:"audio_level"`
-		} `json:"audio_inbound"`
-		AudioOutbound struct {
-			PacketsSent int `json:"packetsSent"`
-			Ssrc int `json:"ssrc"`
-			AudioLevel float64 `json:"audioLevel"`
-		} `json:"audioOutbound"`
-	} `json:"user"`
-	Channel struct {
-		ID string `json:"id"`
-	} `json:"channel"`
-	Server struct {
-		Hostname string `json:"hostname"`
-		ID string `json:"id"`
-	} `json:"server"`
 }
 
-func NewServer(config ServerConfig, messages chan syslog.SyslogData) *Server {
+func NewServer(config ServerConfig, messages chan syslog.SyslogData, errors chan syslog.InvalidMessage) *Server {
 
 	broker, err := kafka.NewBroker("kafka-default", []string{config.Address}, kafka.NewBrokerConf("discord-clerk"))
 	if err != nil {
@@ -57,20 +34,21 @@ func NewServer(config ServerConfig, messages chan syslog.SyslogData) *Server {
 
 	server := Server{
 		Messages: messages,
-		FreightTopic: config.FreightTopic,
+		Errors: errors,
+		Topic: config.Topic,
 		Broker: broker,
 	}
 	return &server
 }
 
 func (s *Server) Start() {
-	partitions, err := s.Broker.PartitionCount(s.FreightTopic)
+	partitions, err := s.Broker.PartitionCount(s.Topic)
 	if err != nil {
-		panic(err)
+		log.Panic("Could not get broker partition count: %v", err);
 	}
 
 	for partitionID := int32(0); partitionID < partitions; partitionID++ {
-		go s.partitionReader(s.FreightTopic, partitionID)
+		go s.partitionReader(s.Topic, partitionID)
 	}
 }
 
@@ -78,26 +56,26 @@ func (s* Server) partitionReader(topic string, partitionID int32) {
 	conf := kafka.NewConsumerConf(topic, partitionID)
 	consumer, err := s.Broker.Consumer(conf)
 	if err != nil {
-		panic(err)
+		s.Errors <- syslog.InvalidMessage{Data: "Could not get Kafka consumer", Error: err}
 	}
 	for {
 		msg, err := consumer.Consume()
 		if err != nil {
-			panic(err)
+			s.Errors <- syslog.InvalidMessage{Data: "Failed to condume message", Error: err}
 		}
 
 		unpack := make(map[string]interface{})
 		if err := json.Unmarshal(msg.Value, &unpack); err != nil {
-			panic(err)
+			s.Errors <- syslog.InvalidMessage{Data: "Invalid message received", Error: err}
 		}
-		var audio_metrics AudioMetrics
-		if err := json.Unmarshal([]byte(unpack["data"].(string)), &audio_metrics); err != nil {
-			panic(err)
+		var timestamp Timestamp
+		if err := json.Unmarshal([]byte(unpack["data"].(string)), &timestamp); err != nil {
+			s.Errors <- syslog.InvalidMessage{Data: "Could not get message timestamp", Error: err}
 		}
 
 		parts := map[string]interface{}{
 			"priority":  0,
-			"timestamp": time.Unix(audio_metrics.Timestamp, 0),
+			"timestamp": time.Unix(timestamp.Timestamp, 0),
 			"hostname":  "127.0.0.1",
 			"tag":       "discord_voice_quality",
 			"pid":       0,

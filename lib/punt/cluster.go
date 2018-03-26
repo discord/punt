@@ -20,7 +20,7 @@ type ClusterServerConfig struct {
 	OctetCounted bool   `json:"octet_counted"`
 	CertFile     string `json:"tls_cert_file"`
 	KeyFile      string `json:"tls_key_file"`
-	FreightTopic string `json:"freight_topic"`
+	Topic        string `json:"topic"`
 	Address      string `json:"address"`
 }
 
@@ -44,6 +44,7 @@ type Cluster struct {
 
 	metrics     *statsd.Client
 	messages    chan syslog.SyslogData
+	errors      chan syslog.InvalidMessage
 	hostname    string
 	reliability int
 	exit        chan bool
@@ -63,6 +64,7 @@ func NewCluster(state *State, name string, config ClusterConfig) *Cluster {
 		Incoming: make(chan *elastic.BulkIndexRequest),
 		metrics:  NewStatsdClient("punt", []string{fmt.Sprintf("cluster-name:%s", name)}),
 		messages: make(chan syslog.SyslogData, config.BufferSize),
+                errors:   make(chan syslog.InvalidMessage),
 		hostname: name,
 		exit:     make(chan bool),
 		workers:  make([]*ClusterWorker, 0),
@@ -115,8 +117,6 @@ func (c *Cluster) spawnServers() {
 func (c *Cluster) startSyslogServer(config ClusterServerConfig) {
 	var syslogServer *syslog.Server
 
-	errors := make(chan syslog.InvalidMessage)
-
 	serverConfig := syslog.ServerConfig{
 		TCPFrameMode: syslog.FRAME_MODE_DELIMITER,
 		Format:       syslog.FORMAT_RFC3164,
@@ -129,16 +129,7 @@ func (c *Cluster) startSyslogServer(config ClusterServerConfig) {
 		}
 	}
 
-	syslogServer = syslog.NewServer(&serverConfig, c.messages, errors)
-
-	// Loop over and consume error payloads, this has inherent backoff within the
-	//  sending side as the channel is async-sent to.
-	go func() {
-		for err := range errors {
-			log.Printf("Error reading incoming message (%v): %s (%v)", err.Error, err.Data, len(err.Data))
-			c.metrics.Incr("msgs.error", []string{}, 1)
-		}
-	}()
+	syslogServer = syslog.NewServer(&serverConfig, c.messages, c.errors)
 
 	// Finally, we're ready to setup and start our syslog server
 	var err error
@@ -185,14 +176,14 @@ func (c *Cluster) startSyslogServer(config ClusterServerConfig) {
 
 func (c *Cluster) startKafkaServer(config ClusterServerConfig) {
 	 serverConfig := kafka.ServerConfig{
-                FreightTopic: config.FreightTopic,
+                Topic: config.Topic,
                 Address: config.Address,
         }
 	var kafkaServer *kafka.Server
-	kafkaServer = kafka.NewServer(serverConfig, c.messages)
+	kafkaServer = kafka.NewServer(serverConfig, c.messages, c.errors)
         kafkaServer.Start()
 
-	log.Printf("  successfully started kafka server: %v with topic: %v", config.Address, config.FreightTopic)
+	log.Printf("  successfully started kafka server: %v with topic: %v", config.Address, config.Topic)
 }
 
 func (c *Cluster) pruneLoop() {
