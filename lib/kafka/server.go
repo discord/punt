@@ -5,7 +5,6 @@ import (
 	"log"
 	"time"
 
-	freight "github.com/discordapp/discord/discord_freight"
 	"github.com/discordapp/punt/lib/syslog"
 	"github.com/jpillora/backoff"
 	"github.com/zorkian/kafka"
@@ -25,6 +24,17 @@ type ServerConfig struct {
 
 type MessageWithTimestamp struct {
 	Timestamp int64 `json:"timestamp"`
+}
+
+type machineInfo struct {
+	Hostname string `json:"hostname"`
+}
+
+type FreightMessage struct {
+	Category    string      `json:"category"`
+	MachineInfo machineInfo `json:"machine_info"`
+	SendTime    time.Time   `json:"send_time"`
+	Data        string      `json:"data"`
 }
 
 func NewServer(config ServerConfig, messages chan syslog.SyslogData, errors chan syslog.InvalidMessage) *Server {
@@ -88,7 +98,7 @@ func (s *Server) partitionReader(topic string, partitionID int32) {
 
 			// All messages should be Freight message formatted messages, unwrap that first
 			// and by default use the SendTime of the message as the timestamp.
-			var message freight.Message
+			var message FreightMessage
 			if err := json.Unmarshal(msg.Value, &message); err != nil {
 				log.Printf("Failed to unmarshal wrapper: %s", err)
 				time.Sleep(messageRetry.Duration())
