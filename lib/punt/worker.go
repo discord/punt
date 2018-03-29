@@ -84,7 +84,7 @@ func (cw *ClusterWorker) run() {
 				typ = cw.Cluster.State.Types["*"]
 
 				if typ == nil {
-					log.Printf("Warning, recieved unhandled tag %v", tag)
+					log.Printf("Warning, received unhandled tag %v", tag)
 					cw.Cluster.metrics.Incr("msgs.unhandled", statsTags, 1)
 					continue
 				}
@@ -177,6 +177,9 @@ func (cw *ClusterWorker) run() {
 			for _, ds := range cw.datastores {
 				ds.Flush()
 			}
+		case err := <-cw.Cluster.errors:
+			log.Printf("Error reading incoming message (%v): %s (%v)", err.Error, err.Data, len(err.Data))
+			cw.Cluster.metrics.Incr("msgs.error", []string{}, 1)
 		}
 	}
 }
