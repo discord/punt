@@ -22,6 +22,7 @@ type ClusterServerConfig struct {
 	KeyFile      string `json:"tls_key_file"`
 	Topic        string `json:"topic"`
 	Address      string `json:"address"`
+	GroupID      string `json:"group_id"`
 }
 
 type ClusterConfig struct {
@@ -179,6 +180,7 @@ func (c *Cluster) startKafkaServer(config ClusterServerConfig) {
 	serverConfig := kafka.ServerConfig{
 		Topic:   config.Topic,
 		Address: config.Address,
+		GroupID: config.GroupID,
 	}
 
 	kafkaServer := kafka.NewServer(serverConfig, c.messages, c.errors)
