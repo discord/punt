@@ -26,5 +26,5 @@ func LoadConfig(path string) (*Config, error) {
 
 	config := Config{}
 	err = json.Unmarshal(file, &config)
-	return &config, nil
+	return &config, err
 }
