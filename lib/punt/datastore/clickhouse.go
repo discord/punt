@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"strings"
 
 	"github.com/DataDog/datadog-go/statsd"
@@ -20,15 +21,16 @@ type preparedQuery struct {
 }
 
 type ClickhouseConfig struct {
-	URL             string
+	Hosts           []string
 	Types           map[string]ClickhouseTypeConfig
 	Batcher         DatastoreBatcherConfig
 	PartitionFormat string
 }
 
 type ClickhouseTypeConfig struct {
-	Table  string
-	Fields map[string]string
+	Table      string
+	PruneTable *string
+	Fields     map[string]string
 }
 
 type ClickhouseDatastore struct {
@@ -92,38 +94,59 @@ func (c *ClickhouseDatastore) Prune(typeName string, keep int) error {
 		return nil
 	}
 
-	// Get a list of all parts for this table
-	rows, err := c.db.Query(`
-		SELECT partition FROM system.parts WHERE table=? GROUP BY partition ORDER BY partition DESC
-	`, typeConfig.Table)
-	if err != nil {
-		return err
+	// Keep is in hours, but we want days
+	keep = int(math.Ceil(float64(keep) / 24.0))
+
+	tableName := typeConfig.Table
+	if typeConfig.PruneTable != nil {
+		tableName = *typeConfig.PruneTable
 	}
 
-	// Figure out if we should delete any of these
-	var (
-		partition string
-	)
+	for _, host := range c.config.Hosts {
+		url := fmt.Sprintf("tcp://%s", host)
 
-	partitions := []string{}
-	for rows.Next() {
-		err := rows.Scan(&partition)
+		db, err := sql.Open("clickhouse", url)
+		if err != nil {
+			log.Printf("[CH] WARNING: failed to connect to clickhouse: %v", err)
+			return err
+		}
+		defer db.Close()
+
+		// Get a list of all parts for this table
+		rows, err := db.Query(
+			`SELECT partition FROM system.parts WHERE table=? GROUP BY partition ORDER BY partition ASC`,
+			tableName,
+		)
 		if err != nil {
 			return err
 		}
 
-		partitions = append(partitions, partition)
-	}
+		// Figure out if we should delete any of these
+		var (
+			partition string
+		)
 
-	if len(partitions) == 0 {
-		return nil
-	}
+		partitions := []string{}
+		for rows.Next() {
+			err := rows.Scan(&partition)
+			if err != nil {
+				return err
+			}
 
-	toDelete := partitions[:len(partitions)-keep]
-	for _, partition = range toDelete {
-		_, err = c.db.Exec(fmt.Sprintf("ALTER TABLE %s DROP PARTITION %s", typeConfig.Table, partition))
-		if err != nil {
-			return err
+			partitions = append(partitions, partition)
+		}
+
+		if len(partitions) == 0 {
+			return nil
+		}
+
+		toDelete := partitions[:len(partitions)-keep]
+		log.Printf("[CH] Deleting partitions %v (%v)", toDelete, typeName)
+		for _, partition = range toDelete {
+			_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s DROP PARTITION %s", tableName, partition))
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -173,7 +196,12 @@ func (c *ClickhouseDatastore) Commit(typeName string, payloads []*DatastorePaylo
 }
 
 func (c *ClickhouseDatastore) connect() {
-	db, err := sql.Open("clickhouse", c.config.URL)
+	url := fmt.Sprintf("tcp://%s", c.config.Hosts[0])
+	if len(c.config.Hosts) > 1 {
+		url = url + fmt.Sprintf("?alt_hosts=%s", strings.Join(c.config.Hosts[1:], ","))
+	}
+
+	db, err := sql.Open("clickhouse", url)
 	if err != nil {
 		log.Printf("[CH] WARNING: failed to connect to clickhouse: %v", err)
 		return
