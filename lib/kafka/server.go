@@ -24,10 +24,6 @@ type ServerConfig struct {
 	GroupID string
 }
 
-type MessageWithTimestamp struct {
-	Timestamp int64 `json:"timestamp"`
-}
-
 type machineInfo struct {
 	Hostname string `json:"hostname"`
 }
@@ -90,14 +86,6 @@ func (s *Server) readForever() {
 			continue
 		}
 		timestamp := message.SendTime
-
-		// Some messages contain a client submitted "timestamp" field. If that's provided,
-		// use that as the timestamp.
-		var report MessageWithTimestamp
-		if err := json.Unmarshal([]byte(message.Data), &report); err == nil {
-			// No error, use timestamp from client.
-			timestamp = time.Unix(report.Timestamp, 0)
-		}
 
 		// Construct message format that the Punt system expects
 		parts := map[string]interface{}{
