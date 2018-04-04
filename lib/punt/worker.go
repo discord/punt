@@ -221,6 +221,8 @@ func typeCastFloat(value float64, resultType string) (interface{}, error) {
 		return uint(value), nil
 	case "string":
 		return fmt.Sprintf("%f", value), nil
+	case "unix-timestamp":
+		return time.Unix(int64(value), 0), nil
 	}
 	return nil, InvalidResultType
 }
