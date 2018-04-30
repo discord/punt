@@ -215,7 +215,7 @@ func (db *DatastoreBatcher) commit(typeName string, buffer []*DatastorePayload) 
 	}
 
 	db.metrics.Count("msgs.dropped", int64(len(buffer)), append(db.tags, "reason:datastore_error"), 1)
-	log.Printf("FAILED: DatastoreBatcher failed to commit: %v", err)
+	log.Printf("FAILED: DatastoreBatcher failed to commit %v: %v", typeName, err)
 }
 
 func CreateDatastore(datastoreType string, datastoreConfig map[string]interface{}) Datastore {
