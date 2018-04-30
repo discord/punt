@@ -191,8 +191,11 @@ func (c *ClickhouseDatastore) Commit(typeName string, payloads []*DatastorePaylo
 		}
 	}
 
-	c.metrics.Count("msgs.commited", int64(len(payloads)), c.tags, 1)
-	return tx.Commit()
+	err = tx.Commit()
+	if err == nil {
+		c.metrics.Count("msgs.commited", int64(len(payloads)), c.tags, 1)
+	}
+	return err
 }
 
 func (c *ClickhouseDatastore) connect() {
