@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"os"
 	"time"
 
 	"github.com/discordapp/punt/lib/syslog"
 	"github.com/jpillora/backoff"
-	kafka "github.com/segmentio/kafka-go"
+	kafka "github.com/zorkian/kafka-go"
 )
+
+const TICK_INTERVAL = 10 * time.Second
 
 type Server struct {
 	Messages chan syslog.SyslogData
@@ -58,6 +61,7 @@ func (s *Server) Start() {
 		MinBytes:       10 * 1024,        // 10KB
 		MaxBytes:       10 * 1024 * 1024, // 10MB
 		CommitInterval: 10 * time.Second, // At most we repeat 10 seconds of data on crash
+		Logger:         log.New(os.Stderr, "", log.LstdFlags),
 	})
 	go s.readForever()
 }
@@ -69,6 +73,9 @@ func (s *Server) readForever() {
 		Jitter: true,
 	}
 
+	msgCount := make(map[int]int)
+	printTime := time.Now().Add(TICK_INTERVAL)
+
 	for {
 		msg, err := s.Reader.ReadMessage(context.Background())
 		if err != nil {
@@ -76,6 +83,13 @@ func (s *Server) readForever() {
 			time.Sleep(messageRetry.Duration())
 			continue
 		}
+
+		if time.Now().After(printTime) {
+			printTime = time.Now().Add(TICK_INTERVAL)
+			log.Printf("Kafka tick: handled messages from partitions: %+v", msgCount)
+			msgCount = make(map[int]int)
+		}
+		msgCount[msg.Partition]++
 
 		// All messages should be Freight message formatted messages, unwrap that first
 		// and by default use the SendTime of the message as the timestamp.
