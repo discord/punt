@@ -1,24 +1,95 @@
 {
   "clusters": {
     "default": {
-      "url": "http://localhost:9200",
+      "datastores": {
+        "ch": {
+          "type": "clickhouse",
+          "config": {
+            "url": "tcp://127.0.0.1:9000",
+            "batcher": {
+              "batchsize": 1,
+              "maxretries": 3,
+              "backoff": 1000,
+              "maxconcurrentcommits": 12
+            },
+            "types": {
+              "*": {
+                "table": "test",
+                "fields": {
+                  "content": {
+                    "source": "content"
+                  }
+                }
+              },
+              "json": {
+                "table": "json",
+                "fields": {
+                  "field1": "field1",
+                  "field2": "field2"
+                }
+              }
+            }
+          }
+        },
+        "es": {
+          "type": "elasticsearch",
+          "config": {
+            "url": "http://localhost:9200",
+            "batcher": {
+              "batchsize": 1,
+              "maxretries": 3,
+              "backoff": 1000,
+              "maxconcurrentcommits": 12,
+              "drop": true
+            },
+            "types": {
+              "*": {
+                "prefix": "test-",
+                "dateformat": "2006.01.02.15",
+                "mappingtype": "test"
+              },
+              "json": {
+                "prefix": "json-",
+                "dateformat": "2006.01.02.15",
+                "mappingtype": "json"
+              }
+            },
+            "mappings": {
+              "test": {
+                "fields": {
+                  "test": {
+                    "type": "text",
+                    "index": true
+                  }
+                }
+              },
+              "json": {
+                "fields": {
+                  "field1": {
+                    "type": "integer",
+                    "index": true
+                  },
+                  "field2": {
+                    "type": "text",
+                    "index": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
       "num_workers": 1,
       "bulk_size": 3,
       "commit_interval": 0,
-      "reliability": {
-        "insert_retries": 3,
-        "retry_delay": 1500
-      },
       "servers": [
         {
           "type": "udp",
-          "bind": "localhost:5679",
-          "buffer_size": 10
+          "bind": "localhost:5679"
         },
         {
           "type": "tcp",
           "bind": "localhost:5678",
-          "buffer_size": 10,
           "octet_counted": true
         }
       ],
@@ -27,49 +98,24 @@
   },
   "types": {
     "*": {
-      "prefix": "test-",
-      "mapping_type": "test",
-      "date_format": "2006.01.02.15",
       "transformer": {
         "name": "direct"
-      }
+      },
+      "prune": 1
     },
-    "logs": {
-      "prefix": "logs-",
-      "mapping_type": "test",
-      "date_format": "2006.01.02.15",
+    "json": {
       "transformer": {
-        "name": "direct"
+        "name": "unpack-merge"
+      },
+      "field_types": {
+        "field1": "int"
       }
-    }
-  },
-  "gc": {
-    "test-": {
-      "keep": 1
-    },
-    "logs-": {
-      "keep": 5
-    }
-  },
-  "mappings": {
-    "test": {
-      "fields": {
-        "test": {
-          "type": "text",
-          "index": true
-        }
-      }
-    }
-  },
-  "templates": {
-    "test-*": {
-      "mappings": ["test"]
     }
   },
   "alerts": {
     "magic-word-found": {
       "type": "match",
-      "sources": [],
+      "sources": ["*"],
       "rollup_window": 2,
       "config": {
         "source": "content",

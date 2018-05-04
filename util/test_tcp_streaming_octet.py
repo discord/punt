@@ -1,13 +1,31 @@
+from datetime import datetime
 import socket
 
-messages = [
-    '98 <133>Mar 14 04:20:29 example-host-prod-1-1 audit type=SYSCALL msg=audit(1489465219.995:1699): test',
-]
 
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-s.connect(('localhost', 5678))
+def syslog_fmt(host, prio, tag, procid, contents):
+    msg = '<{prio}>{date} {host} {tag}[{procid}]: {contents}'.format(
+        prio=prio,
+        date=datetime.utcnow().strftime('%b %d %H:%M:%S'),
+        host=host,
+        tag=tag,
+        procid=procid,
+        contents=contents,
+    )
 
-for msg in messages:
-    s.send(msg)
+    return '{} {}'.format(len(msg), msg)
 
-s.close()
+
+def main():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.connect(('localhost', 5678))
+    s.send(syslog_fmt(
+        'example-host-prd-1-1',
+        133,
+        'json',
+        1234,
+        '{"field1": 123.456, "field2": "test"}',
+    ))
+    s.close()
+
+
+main()

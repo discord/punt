@@ -57,19 +57,19 @@ func NewState(config *Config) *State {
 func (s *State) Run() {
 	log.Printf("Attempting to start Punt")
 
-	for mappingName, mapping := range s.Config.Mappings {
-		mapping.Name = mappingName
-	}
-
 	for _, cluster := range s.Clusters {
+		log.Printf("Starting cluster: %s", cluster.Name)
 		cluster.Run()
 	}
+
+	log.Printf("Done starting clusters")
 
 	if s.Config.ControlSocket.Enabled {
 		cs, err := NewControlSocket(s, s.Config.ControlSocket.Bind)
 		if err != nil {
 			log.Printf("Failed to create control socket: %v", err)
 		} else {
+			log.Printf("Created control socket")
 			go cs.Run()
 		}
 	}
